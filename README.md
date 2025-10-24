@@ -1,4 +1,4 @@
-# muse-js
+# muse-jsx
 
 > Note (credit and provenance)
 >
