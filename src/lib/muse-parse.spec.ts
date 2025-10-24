@@ -1,4 +1,4 @@
-import { from } from 'rxjs';
+import { firstValueFrom, from } from 'rxjs';
 import { toArray } from 'rxjs/operators';
 
 import {
@@ -37,9 +37,7 @@ describe('parseControl', () => {
             '"rc":0}{"r',
             'c":0}',
         ]);
-        const results = await parseControl(input)
-            .pipe(toArray())
-            .toPromise();
+        const results = await firstValueFrom(parseControl(input).pipe(toArray()));
         expect(results).toEqual([
             {
                 ap: 'headset',
@@ -73,18 +71,7 @@ describe('decodeUnsigned12BitData', () => {
     it('should correctly decode 12-bit EEG samples received from muse', () => {
         const input = new Uint8Array([87, 33, 192, 82, 73, 6, 106, 242, 49, 64, 88, 153, 128, 66, 254, 44, 119, 157]);
         expect(decodeUnsigned12BitData(input)).toEqual([
-            1394,
-            448,
-            1316,
-            2310,
-            1711,
-            561,
-            1029,
-            2201,
-            2052,
-            766,
-            711,
-            1949,
+            1394, 448, 1316, 2310, 1711, 561, 1029, 2201, 2052, 766, 711, 1949,
         ]);
     });
 });
@@ -114,26 +101,7 @@ describe('parseAccelerometer', () => {
     it('should parse Muse accelerometer data and return (x,y,z) vectors in g units', () => {
         const input = new DataView(
             new Uint8Array([
-                82,
-                109,
-                13,
-                178,
-                13,
-                157,
-                60,
-                115,
-                18,
-                5,
-                13,
-                73,
-                60,
-                53,
-                17,
-                183,
-                17,
-                227,
-                60,
-                143,
+                82, 109, 13, 178, 13, 157, 60, 115, 18, 5, 13, 73, 60, 53, 17, 183, 17, 227, 60, 143,
             ]).buffer,
         );
         expect(parseAccelerometer(input)).toEqual({

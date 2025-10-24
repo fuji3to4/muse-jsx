@@ -1,7 +1,7 @@
-import { BehaviorSubject, fromEvent, merge, Observable, Subject } from 'rxjs';
+import { BehaviorSubject, firstValueFrom, fromEvent, merge, Observable, Subject } from 'rxjs';
 import { filter, first, map, share, take } from 'rxjs/operators';
 
-import {
+import type {
     AccelerometerData,
     EEGReading,
     EventMarker,
@@ -22,9 +22,11 @@ import {
 } from './lib/muse-parse';
 import { decodeResponse, encodeCommand, observableCharacteristic } from './lib/muse-utils';
 
-export { zipSamples, EEGSample } from './lib/zip-samples';
-export { zipSamplesPpg, PPGSample } from './lib/zip-samplesPpg';
-export {
+export { zipSamples } from './lib/zip-samples';
+export { zipSamplesPpg } from './lib/zip-samplesPpg';
+export type { EEGSample } from './lib/zip-samples';
+export type { PPGSample } from './lib/zip-samplesPpg';
+export type {
     EEGReading,
     PPGReading,
     TelemetryData,
@@ -68,19 +70,19 @@ export class MuseClient {
     enablePpg = false;
     deviceName: string | null = '';
     connectionStatus = new BehaviorSubject<boolean>(false);
-    rawControlData: Observable<string>;
-    controlResponses: Observable<MuseControlResponse>;
-    telemetryData: Observable<TelemetryData>;
-    gyroscopeData: Observable<GyroscopeData>;
-    accelerometerData: Observable<AccelerometerData>;
-    eegReadings: Observable<EEGReading>;
-    ppgReadings: Observable<PPGReading>;
-    eventMarkers: Subject<EventMarker>;
+    rawControlData!: Observable<string>;
+    controlResponses!: Observable<MuseControlResponse>;
+    telemetryData!: Observable<TelemetryData>;
+    gyroscopeData!: Observable<GyroscopeData>;
+    accelerometerData!: Observable<AccelerometerData>;
+    eegReadings!: Observable<EEGReading>;
+    ppgReadings!: Observable<PPGReading>;
+    eventMarkers: Subject<EventMarker> = new Subject();
 
     private gatt: BluetoothRemoteGATTServer | null = null;
-    private controlChar: BluetoothRemoteGATTCharacteristic;
-    private eegCharacteristics: BluetoothRemoteGATTCharacteristic[];
-    private ppgCharacteristics: BluetoothRemoteGATTCharacteristic[];
+    private controlChar!: BluetoothRemoteGATTCharacteristic;
+    private eegCharacteristics!: BluetoothRemoteGATTCharacteristic[];
+    private ppgCharacteristics!: BluetoothRemoteGATTCharacteristic[];
 
     private lastIndex: number | null = null;
     private lastTimestamp: number | null = null;
@@ -125,8 +127,6 @@ export class MuseClient {
         this.accelerometerData = (await observableCharacteristic(accelerometerCharacteristic)).pipe(
             map(parseAccelerometer),
         );
-
-        this.eventMarkers = new Subject();
 
         // PPG
         if (this.enablePpg) {
@@ -207,14 +207,12 @@ export class MuseClient {
     }
 
     async deviceInfo() {
-        const resultListener = this.controlResponses
-            .pipe(
-                filter((r) => !!r.fw),
-                take(1),
-            )
-            .toPromise();
+        const resultListener = this.controlResponses.pipe(
+            filter((r) => !!r.fw),
+            take(1),
+        );
         await this.sendCommand('v1');
-        return resultListener as Promise<MuseDeviceInfo>;
+        return firstValueFrom(resultListener) as Promise<MuseDeviceInfo>;
     }
 
     async injectMarker(value: string | number, timestamp: number = new Date().getTime()) {

@@ -3,11 +3,11 @@ import { DeviceMock, WebBluetoothMock } from 'web-bluetooth-mock';
 import { EEGReading, PPGReading } from './../dist/lib/muse-interfaces.d';
 import { MuseClient } from './muse';
 
-declare var global;
+declare const global: any;
 
 let museDevice: DeviceMock;
 
-function charCodes(s) {
+function charCodes(s: string) {
     return s.split('').map((c) => c.charCodeAt(0));
 }
 
@@ -72,7 +72,7 @@ describe('MuseClient', () => {
         });
     });
 
-    describe('start', async () => {
+    describe('start', () => {
         it('should send `h`, `s`, `p21` and `d` commands to the EEG headset', async () => {
             const client = new MuseClient();
             const controlCharacteristic = museDevice
@@ -133,7 +133,7 @@ describe('MuseClient', () => {
             const client = new MuseClient();
             await client.connect();
 
-            let lastReading: EEGReading;
+            let lastReading: EEGReading | undefined;
             client.eegReadings.subscribe((reading) => {
                 lastReading = reading;
             });
@@ -149,25 +149,14 @@ describe('MuseClient', () => {
                 electrode: 3,
                 index: 1,
                 samples: [
-                    -687.5,
-                    -562.5,
-                    -687.5,
-                    -562.5,
-                    -687.5,
-                    -562.5,
-                    -687.5,
-                    -562.5,
-                    -687.5,
-                    -562.5,
-                    -687.5,
-                    -562.5,
+                    -687.5, -562.5, -687.5, -562.5, -687.5, -562.5, -687.5, -562.5, -687.5, -562.5, -687.5, -562.5,
                 ],
                 timestamp: expect.any(Number),
             });
 
             // Timestamp should be about (1000/256.0*12) milliseconds behind the event dispatch time
-            expect(lastReading.timestamp).toBeGreaterThanOrEqual(beforeDispatchTime - (1000 / 256.0) * 12);
-            expect(lastReading.timestamp).toBeLessThanOrEqual(afterDispatchTime - (1000 / 256.0) * 12);
+            expect(lastReading?.timestamp).toBeGreaterThanOrEqual(beforeDispatchTime - (1000 / 256.0) * 12);
+            expect(lastReading?.timestamp).toBeLessThanOrEqual(afterDispatchTime - (1000 / 256.0) * 12);
         });
 
         it('should report the same timestamp for eeg events with the same sequence', async () => {
@@ -334,7 +323,11 @@ describe('MuseClient', () => {
 
             const client = new MuseClient();
             await client.connect();
+
             const deviceInfoPromise = client.deviceInfo();
+
+            // Wait for subscription to be set up
+            await new Promise((resolve) => setTimeout(resolve, 10));
 
             expect(controlCharacteristic.writeValue).toHaveBeenCalledWith(new Uint8Array([3, ...charCodes('v1'), 10]));
 
@@ -403,7 +396,7 @@ describe('MuseClient', () => {
             const client = new MuseClient();
             await client.connect();
 
-            const markers = [];
+            const markers: any[] = [];
             client.eventMarkers.subscribe((eventMarker) => {
                 markers.push(eventMarker);
             });
@@ -421,7 +414,7 @@ describe('MuseClient', () => {
             const client = new MuseClient();
             await client.connect();
 
-            const markers = [];
+            const markers: any[] = [];
             client.eventMarkers.subscribe((eventMarker) => {
                 markers.push(eventMarker);
             });

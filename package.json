@@ -9,11 +9,12 @@
   "license": "MIT",
   "scripts": {
     "build": "tsc",
-    "format": "prettier --write src/**.ts **/*.json",
+    "format": "prettier --write \"src/**/*.ts\" \"**/*.json\"",
     "precommit": "lint-staged",
-    "prepublish": "npm run build",
-    "start": "node demo/fuse",
-    "lint": "tslint src/**/*.ts demo/src/**/*.ts",
+    "prepare": "npm run build",
+    "start": "vite",
+    "start:legacy": "node demo/fuse",
+    "lint": "eslint src/**/*.ts demo/src/**/*.ts",
     "test": "npm run lint && jest",
     "test:watch": "jest --watch"
   },
@@ -21,25 +22,34 @@
     "dist"
   ],
   "devDependencies": {
-    "@types/jest": "^22.2.3",
-    "event-target-shim": "^3.0.0",
-    "fuse-box": "^2.0.0",
-    "husky": "^0.14.3",
-    "jest": "^22.4.3",
-    "lint-staged": "^7.0.4",
-    "prettier": "^1.12.1",
-    "text-encoding": "^0.6.4",
-    "ts-jest": "^22.4.4",
-    "tslint": "^5.8.0",
-    "typescript": "^2.8.3",
+    "@types/jest": "^29.5.13",
+    "@types/text-encoding": "^0.0.40",
+    "@typescript-eslint/eslint-plugin": "^8.11.0",
+    "@typescript-eslint/parser": "^8.11.0",
+    "@vitejs/plugin-legacy": "^7.2.1",
+    "eslint": "^9.13.0",
+    "eslint-config-prettier": "^9.1.0",
+    "event-target-shim": "^6.0.2",
+    "fuse-box": "^4.0.0",
+    "husky": "^9.1.6",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^30.2.0",
+    "lint-staged": "^15.2.10",
+    "prettier": "^3.3.3",
+    "text-encoding": "^0.7.0",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.6.3",
+    "vite": "^7.1.12",
     "web-bluetooth-mock": "^1.0.2",
-    "zen-observable": "^0.8.8"
+    "zen-observable": "^0.10.0"
   },
   "dependencies": {
-    "@types/web-bluetooth": "^0.0.2",
-    "rxjs": "^6.0.0 || ^5.6.0-forward-compat.4"
+    "@types/web-bluetooth": "^0.0.20",
+    "rxjs": "^7.8.1"
   },
   "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "jsdom",
     "moduleFileExtensions": [
       "ts",
       "js"
@@ -49,18 +59,15 @@
     },
     "testMatch": [
       "**/*.spec.ts"
-    ],
-    "testURL": "http://localhost/"
+    ]
   },
   "lint-staged": {
     "*.{js,json}": [
-      "prettier --write",
-      "git add"
+      "prettier --write"
     ],
     "*.ts": [
       "prettier --write",
-      "tslint --fix",
-      "git add"
+      "eslint --fix"
     ]
   }
 }

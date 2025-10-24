@@ -1,38 +1,28 @@
-const {
-    FuseBox,
-	SassPlugin,
-	CSSPlugin,
-	WebIndexPlugin,
-	TypeScriptHelpers,
-	JSONPlugin,
-	HTMLPlugin
-} = require('fuse-box');
+const { fusebox, sparky, pluginTypeScript, pluginSass, pluginLink } = require('fuse-box');
 
-const fuse = FuseBox.init({
-	homeDir: `..`,
-	output: `dist/$name.js`,
-	plugins: [
-		WebIndexPlugin({
-			title: "",
-			template: "src/index.html"
-		}), [
-			SassPlugin({ outputStyle: 'compressed' }),
-			CSSPlugin()
-		],
-		TypeScriptHelpers(),
-		JSONPlugin()
-	]
+sparky().task('default', async () => {
+    const fuse = await fusebox({
+        target: 'browser',
+        entry: 'demo/src/main.ts',
+        devServer: {
+            httpServer: {
+                port: 4445,
+            },
+            hmrServer: true,
+        },
+        cache: {
+            enabled: true,
+            root: '.fusebox',
+        },
+        webIndex: {
+            template: 'demo/src/index.html',
+        },
+        plugins: [pluginTypeScript(), pluginSass()],
+        sourceMap: true,
+        watch: true,
+    });
+
+    await fuse.runDev();
 });
 
-// setup development sever
-fuse.dev({ port: 4445 });
-
-// bundle application
-fuse.bundle("app")
-	.sourceMaps(true)
-	.instructions(" > demo/src/main.ts")
-	.watch('demo/src/**|lib/**')
-	.hmr();
-
-// run the factory
-fuse.run();
+sparky().exec();

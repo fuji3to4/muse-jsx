@@ -1,8 +1,8 @@
 # muse-js
 
-[![Build Status](https://travis-ci.org/urish/muse-js.png?branch=master)](https://travis-ci.org/urish/muse-js)
 
 Muse 1, Muse 2, and Muse S EEG Headset JavaScript Library (using Web Bluetooth).
+Reconstruct muse-js from source code.
 
 ## Running the demo app
 

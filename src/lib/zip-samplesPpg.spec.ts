@@ -1,4 +1,4 @@
-import { Observable, of } from 'rxjs';
+import { firstValueFrom, of } from 'rxjs';
 import { toArray } from 'rxjs/operators';
 
 import { zipSamplesPpg } from './zip-samplesPpg';
@@ -46,7 +46,7 @@ describe('zipSamplesPpg', () => {
             },
         );
         const zipped = zipSamplesPpg(input);
-        const result = await zipped.pipe(toArray()).toPromise();
+        const result = await firstValueFrom(zipped.pipe(toArray()));
         expect(result).toEqual([
             { index: 100, timestamp: 1000.0, data: [0.01, 1.01, 2.01] },
             { index: 100, timestamp: 1015.625, data: [0.02, 1.02, 2.02] },
@@ -69,7 +69,7 @@ describe('zipSamplesPpg', () => {
             { index: 50, timestamp: 5000, ppgChannel: 2, samples: [2.01, 2.02, 2.03, 2.04] },
         );
         const zipped = zipSamplesPpg(input);
-        const result = await zipped.pipe(toArray()).toPromise();
+        const result = await firstValueFrom(zipped.pipe(toArray()));
         expect(result).toEqual([
             { index: 50, timestamp: 5000.0, data: [0.01, NaN, 2.01] },
             { index: 50, timestamp: 5015.625, data: [0.02, NaN, 2.02] },
