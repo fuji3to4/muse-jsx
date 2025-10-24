@@ -1,10 +1,14 @@
 import { encodeCommand } from './muse-utils';
 
-import { TextDecoder, TextEncoder } from 'text-encoding'; // polyfill
+import { TextDecoder as UtilTextDecoder, TextEncoder as UtilTextEncoder } from 'node:util';
 
 declare var global: any;
-global.TextEncoder = TextEncoder;
-global.TextDecoder = TextDecoder;
+if (typeof global.TextEncoder === 'undefined') {
+    global.TextEncoder = UtilTextEncoder as any;
+}
+if (typeof global.TextDecoder === 'undefined') {
+    global.TextDecoder = UtilTextDecoder as any;
+}
 
 describe('encodeCommand', () => {
     it('should correctly encode the given command as a Uint8Array', () => {

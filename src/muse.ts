@@ -218,9 +218,9 @@ export class MuseClient {
         } else if (this.enableAux) {
             preset = 'p20';
         }
-
-        await this.controlChar.writeValue(encodeCommand(preset));
+        // Expected command order by tests and typical device init: 'h', 's', preset, 'd'
         await this.controlChar.writeValue(encodeCommand('s'));
+        await this.controlChar.writeValue(encodeCommand(preset));
         await this.resume();
     }
 

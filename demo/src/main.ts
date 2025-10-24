@@ -39,7 +39,9 @@ async function connect() {
     });
 
     try {
-        client.enableAux = true;
+        // AUX の有効/無効は UI のチェックボックスで切り替え（既定は無効）
+        const auxToggle = document.getElementById('aux-toggle') as HTMLInputElement | null;
+        client.enableAux = !!auxToggle?.checked;
         await client.connect();
         await client.start();
         document.getElementById('headset-name')!.innerText = client.deviceName ?? 'unknown';
@@ -70,5 +72,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const connectButton = document.querySelector('button');
     if (connectButton) {
         connectButton.addEventListener('click', connect);
+    }
+    // AUX 未使用時は AUX 用 UI を隠す
+    const auxToggle = document.getElementById('aux-toggle') as HTMLInputElement | null;
+    const electrodeItems = Array.from(document.querySelectorAll('.electrode-item')) as HTMLElement[];
+    const updateAuxVisibility = () => {
+        const showAux = !!auxToggle?.checked;
+        const auxItem = electrodeItems[4]; // 5番目が AUX
+        if (auxItem) auxItem.style.display = showAux ? '' : 'none';
+    };
+    if (auxToggle) {
+        auxToggle.addEventListener('change', updateAuxVisibility);
+        updateAuxVisibility();
     }
 });

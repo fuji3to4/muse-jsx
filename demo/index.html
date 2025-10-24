@@ -25,13 +25,27 @@
             background: #333;
             border: solid black 1px;
         }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .no-select {
+            -webkit-user-select: none;
+            user-select: none;
+        }
     </style>
 </head>
 
 <body>
-    <button id="connect-button">
-        Connect!
-    </button>
+    <div class="controls">
+        <button id="connect-button">Connect!</button>
+        <label class="no-select">
+            <input type="checkbox" id="aux-toggle" /> Enable AUX channel
+        </label>
+    </div>
 
     <div>
         Name: <span id="headset-name">unknown</span>

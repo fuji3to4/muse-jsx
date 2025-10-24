@@ -1,4 +1,5 @@
-import { TextDecoder, TextEncoder } from 'text-encoding';
+// Node 18+ provides global TextEncoder/TextDecoder. For safety in Jest, fallback to node:util
+import { TextDecoder as UtilTextDecoder, TextEncoder as UtilTextEncoder } from 'node:util';
 import { DeviceMock, WebBluetoothMock } from 'web-bluetooth-mock';
 import { EEGReading, PPGReading } from './../dist/lib/muse-interfaces.d';
 import { MuseClient } from './muse';
@@ -16,7 +17,12 @@ describe('MuseClient', () => {
         museDevice = new DeviceMock('Muse-Test', [0xfe8d]);
         global.navigator = global.navigator || {};
         global.navigator.bluetooth = new WebBluetoothMock([museDevice]);
-        Object.assign(global, { TextDecoder, TextEncoder });
+        if (typeof global.TextEncoder === 'undefined') {
+            global.TextEncoder = UtilTextEncoder as any;
+        }
+        if (typeof global.TextDecoder === 'undefined') {
+            global.TextDecoder = UtilTextDecoder as any;
+        }
     });
 
     describe('connect', () => {

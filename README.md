@@ -2,17 +2,23 @@
 
 > Note (credit and provenance)
 >
-> This repository is a minimal derivative of the original muse-js ([muse-js](https://github.com/urish/muse-js)), modified only via AI agent–assisted edits. All credit and copyright belong to the original authors and contributors of urish/muse-js. This repository does not claim originality. See the bundled LICENSE.
+> This repository is a minimal derivative of the original muse-js ([muse-js](https://github.com/urish/muse-js)), modified mainly via AI agent–assisted edits. All credit and copyright belong to the original authors and contributors of urish/muse-js. This repository does not claim originality. See the bundled LICENSE.
 
 
  Muse 1, Muse 2, and Muse S EEG Headset JavaScript Library (using Web Bluetooth).
  Reconstruct muse-js from source code.
 
-## About changes
+## About this fork
 
-- Changes in this repository are intentionally minimal.
 - Original: <https://github.com/urish/muse-js>
 - License: See the included `LICENSE` (original attributions preserved).
+- Node.js 20+ compatibility fixes.
+- RxJS 7+ support.
+
+## Requirements
+
+- Node.js 18+ (recommended: 20+). TextEncoder/TextDecoder are available natively; no polyfills needed.
+- Browser: Web Bluetooth capable (Chrome/Edge). A secure context (HTTPS or localhost) is required.
 
 ## Running the demo app
 
@@ -42,19 +48,35 @@ and then open <http://localhost:4445/>
 
     main();
 
+## Host the demo on GitHub Pages
+
+This repository includes a GitHub Pages workflow (`.github/workflows/pages.yml`). Pushing to `main` builds the `demo/` with Vite and deploys `dist-demo/` to Pages.
+
+- Public URL (depends on your account/repo): `https://<your-account>.github.io/muse-jsx/`
+- Vite `base` is set to `/muse-jsx/` so assets resolve correctly.
+
+To preview the deployable assets locally:
+
+  npm run build
+  npm run build:demo
+
+Output directory: `dist-demo/`
+
 ## Using in Node.js
 
 This fork does not include or document Node.js support via bleat/noble. It targets Web Bluetooth in supported browsers. If you need Node.js integration, please refer to the original project and its ecosystem.
 
 ## Auxiliary Electrode
 
-The Muse 2016 EEG headsets contains four electrodes, and you can connect an additional Auxiliary electrode through the Micro USB port. By default, muse-js does not read data from the Auxiliary electrode channel. You can change this behavior and enable the Auxiliary electrode by setting the `enableAux` property to `true`, just before calling the `connect` method:
+The Muse 2016 EEG headsets contain four electrodes, and you can connect an additional Auxiliary electrode through the Micro USB port. By default, muse-js does not read data from the Auxiliary electrode channel. You can change this behavior and enable the Auxiliary electrode by setting the `enableAux` property to `true`, just before calling the `connect` method:
 
     async function main() {
       let client = new MuseClient();
       client.enableAux = true;
       await client.connect();
     }
+
+In the demo app, AUX is off by default and can be enabled via the checkbox.
 
 ## PPG (Photoplethysmography) / Optical Sensor
 
@@ -90,4 +112,5 @@ For convenience, there is an `eventMarkers` stream included in `MuseClient` that
 
 
 ## License
+
 MIT License

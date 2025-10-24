@@ -6,6 +6,8 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig({
     root: 'demo',
+    // GitHub Pages で /<repo>/ 配下にデプロイされるため、ベースパスを設定
+    base: '/muse-jsx/',
     resolve: {
         alias: {
             '@': resolve(__dirname, './src'),
