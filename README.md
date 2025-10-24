@@ -89,3 +89,5 @@ For convenience, there is an `eventMarkers` stream included in `MuseClient` that
   }
 
 
+## License
+MIT License
