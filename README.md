@@ -10,7 +10,7 @@
 
 ## About changes
 
-- Changes in this repository are intentionally minimal. Please see the commit history for details.
+- Changes in this repository are intentionally minimal.
 - Original: <https://github.com/urish/muse-js>
 - License: See the included `LICENSE` (original attributions preserved).
 
@@ -87,4 +87,5 @@ For convenience, there is an `eventMarkers` stream included in `MuseClient` that
     client.injectMarker("face")
     client.injectMarker("dog")
   }
+
 
