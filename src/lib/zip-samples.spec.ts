@@ -1,5 +1,5 @@
 import { firstValueFrom, of } from 'rxjs';
-import { toArray } from 'rxjs/operators';
+import { toArray } from 'rxjs';
 
 import { zipSamples } from './zip-samples';
 

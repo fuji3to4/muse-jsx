@@ -42,7 +42,7 @@ async function connect() {
         client.enableAux = true;
         await client.connect();
         await client.start();
-        document.getElementById('headset-name')!.innerText = client.deviceName ?? '';
+        document.getElementById('headset-name')!.innerText = client.deviceName ?? 'unknown';
         client.eegReadings.subscribe((reading) => {
             plot(reading);
         });

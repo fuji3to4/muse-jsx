@@ -1,5 +1,5 @@
 import { from, Observable } from 'rxjs';
-import { concat, mergeMap } from 'rxjs/operators';
+import { concatWith, mergeMap } from 'rxjs';
 import { PPG_FREQUENCY } from './../muse';
 import { PPGReading } from './muse-interfaces';
 
@@ -25,7 +25,7 @@ export function zipSamplesPpg(ppgReadings: Observable<PPGReading>): Observable<P
             buffer.push(reading);
             return from([]);
         }),
-        concat(from([buffer])),
+        concatWith(from([buffer])),
         mergeMap((readings: PPGReading[]) => {
             const result = readings[0].samples.map((x, index) => {
                 const data = [NaN, NaN, NaN];

@@ -1,5 +1,5 @@
 import { from, Observable } from 'rxjs';
-import { concat, mergeMap } from 'rxjs/operators';
+import { concatWith, mergeMap } from 'rxjs';
 import { EEG_FREQUENCY } from './../muse';
 import { EEGReading } from './muse-interfaces';
 
@@ -25,7 +25,7 @@ export function zipSamples(eegReadings: Observable<EEGReading>): Observable<EEGS
             buffer.push(reading);
             return from([]);
         }),
-        concat(from([buffer])),
+        concatWith(from([buffer])),
         mergeMap((readings: EEGReading[]) => {
             const result = readings[0].samples.map((x, index) => {
                 const data = [NaN, NaN, NaN, NaN, NaN];

@@ -1,5 +1,5 @@
 import { firstValueFrom, from } from 'rxjs';
-import { toArray } from 'rxjs/operators';
+import { toArray } from 'rxjs';
 
 import {
     decodeUnsigned12BitData,

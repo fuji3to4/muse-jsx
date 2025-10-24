@@ -1,5 +1,5 @@
 import { BehaviorSubject, firstValueFrom, fromEvent, merge, Observable, Subject } from 'rxjs';
-import { filter, first, map, share, take } from 'rxjs/operators';
+import { filter, first, map, share, take } from 'rxjs';
 
 import type {
     AccelerometerData,
@@ -88,12 +88,38 @@ export class MuseClient {
     private lastTimestamp: number | null = null;
 
     async connect(gatt?: BluetoothRemoteGATTServer) {
+        // Web Bluetooth must run in a secure context (https or localhost)
+        // In test (Node) environment, isSecureContext is undefined – only enforce when available.
+        if (typeof isSecureContext !== 'undefined' && !isSecureContext) {
+            throw new Error('Web Bluetooth requires a secure context (https or localhost).');
+        }
+
         if (gatt) {
             this.gatt = gatt;
         } else {
-            const device = await navigator.bluetooth.requestDevice({
-                filters: [{ services: [MUSE_SERVICE] }],
-            });
+            // Prefer previously authorized devices to avoid showing the chooser when possible
+            let device: BluetoothDevice | null = null;
+            const bt: any = (navigator as any).bluetooth;
+            if (bt && typeof bt.getDevices === 'function') {
+                try {
+                    const devices: BluetoothDevice[] = await bt.getDevices();
+                    device = devices.find((d) => d.name?.startsWith('Muse')) || null;
+                } catch {
+                    // Ignore and fallback to requestDevice
+                }
+            }
+
+            if (!device) {
+                device = await navigator.bluetooth.requestDevice({
+                    filters: [
+                        {
+                            services: [MUSE_SERVICE],
+                            namePrefix: 'Muse',
+                        },
+                    ],
+                    optionalServices: [MUSE_SERVICE],
+                });
+            }
             this.gatt = await device.gatt!.connect();
         }
         this.deviceName = this.gatt.device.name || null;

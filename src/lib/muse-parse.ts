@@ -1,5 +1,5 @@
 import { Observable } from 'rxjs';
-import { concatMap, filter, map, scan } from 'rxjs/operators';
+import { concatMap, filter, map, scan } from 'rxjs';
 
 import { AccelerometerData, GyroscopeData, TelemetryData } from './muse-interfaces';
 

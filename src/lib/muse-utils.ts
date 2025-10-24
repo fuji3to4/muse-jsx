@@ -1,5 +1,5 @@
 import { fromEvent } from 'rxjs';
-import { map, takeUntil } from 'rxjs/operators';
+import { map, takeUntil } from 'rxjs';
 
 export function decodeResponse(bytes: Uint8Array) {
     return new TextDecoder().decode(bytes.subarray(1, 1 + bytes[0]));
