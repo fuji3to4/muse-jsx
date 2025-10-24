@@ -16,8 +16,8 @@
 
 ## Running the demo app
 
-  npm install
-  npm start
+    npm install
+    npm start
 
 and then open <http://localhost:4445/>
 
