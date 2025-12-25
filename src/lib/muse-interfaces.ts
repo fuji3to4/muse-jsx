@@ -52,21 +52,26 @@ export interface EventMarker {
 }
 
 export type GyroscopeData = AccelerometerData;
-// Athena-specific interfaces
+// Athena-specific interfaces (compatible with muse.ts structure)
 export interface AthenaEEGReading {
-    timestamp: number;
-    samples: number[]; // 16 EEG values from 0x12 packet
+    index: number; // Event index (for timestamp calculation)
+    electrode: number; // Channel 0-7 (8 channels total)
+    timestamp: number; // milliseconds since epoch
+    samples: number[]; // 2 EEG samples at 256 Hz
 }
 
-export interface AthenaAccGyroReading {
-    timestamp: number;
-    acc: XYZ[]; // 3 ACC samples
-    gyro: XYZ[]; // 3 GYRO samples
+export interface AthenaAccGyroSample {
+    index: number; // Event index
+    timestamp: number; // milliseconds since epoch
+    acc?: XYZ; // Single ACC sample at 52 Hz
+    gyro?: XYZ; // Single GYRO sample at 52 Hz
 }
 
 export interface AthenaOpticalReading {
-    timestamp: number;
-    samples: number[]; // 4 values per sample x 3 samples
+    index: number; // Event index
+    opticalChannel: number; // Channel 0-2 (ambient, IR, red)
+    timestamp: number; // milliseconds since epoch
+    samples: number[]; // 4 optical values at 64 Hz
 }
 
 export interface AthenaBatteryData {
