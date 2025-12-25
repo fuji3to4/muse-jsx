@@ -52,3 +52,24 @@ export interface EventMarker {
 }
 
 export type GyroscopeData = AccelerometerData;
+// Athena-specific interfaces
+export interface AthenaEEGReading {
+    timestamp: number;
+    samples: number[]; // 16 EEG values from 0x12 packet
+}
+
+export interface AthenaAccGyroReading {
+    timestamp: number;
+    acc: XYZ[]; // 3 ACC samples
+    gyro: XYZ[]; // 3 GYRO samples
+}
+
+export interface AthenaOpticalReading {
+    timestamp: number;
+    samples: number[]; // 4 values per sample x 3 samples
+}
+
+export interface AthenaBatteryData {
+    timestamp: number;
+    values: number[]; // 10 battery values
+}
