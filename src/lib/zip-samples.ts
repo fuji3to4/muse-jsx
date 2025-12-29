@@ -27,8 +27,10 @@ export function zipSamples(eegReadings: Observable<EEGReading>): Observable<EEGS
         }),
         concatWith(from([buffer])),
         mergeMap((readings: EEGReading[]) => {
+            // Detect number of channels from the readings (standard Muse: 5, Athena: 8)
+            const numChannels = Math.max(...readings.map((r) => r.electrode)) + 1;
             const result = readings[0].samples.map((x, index) => {
-                const data = [NaN, NaN, NaN, NaN, NaN];
+                const data = new Array(numChannels).fill(NaN);
                 for (const reading of readings) {
                     data[reading.electrode] = reading.samples[index];
                 }

@@ -7,7 +7,7 @@ import { BehaviorSubject, firstValueFrom, fromEvent, Observable, Subject } from 
 import { filter, first, map, share, take, mergeMap } from 'rxjs';
 
 import type {
-    AthenaEEGReading,
+    EEGReading,
     AthenaAccGyroSample,
     AthenaOpticalReading,
     AthenaBatteryData,
@@ -29,14 +29,25 @@ const ATHENA_SENSOR_CHAR_UUIDS = [
     '273e0003-4c4d-454d-96be-f03bac821358', // EEG TP9 (fallback)
 ];
 
+// These names match the characteristics defined in PPG_CHARACTERISTICS above
+export const opticalChannelNames = ['ambient', 'infrared', 'red'];
+
+// These names match the characteristics defined in EEG_CHARACTERISTICS above
+export const channelNames = ['TP9', 'AF7', 'AF8', 'TP10', 'FPz', 'AUX_R', 'AUX_L', 'AUX'];
+
 // Athena commands (matching Python implementation)
 const ATHENA_COMMANDS = {
+    v4: new Uint8Array([0x03, 0x76, 0x34, 0x0a]), // Version
     v6: new Uint8Array([0x03, 0x76, 0x36, 0x0a]), // Version
     s: new Uint8Array([0x02, 0x73, 0x0a]), // Status
     h: new Uint8Array([0x02, 0x68, 0x0a]), // Halt
+    //Presets
     p21: new Uint8Array([0x04, 0x70, 0x32, 0x31, 0x0a]), // Basic preset
     p1034: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x33, 0x34, 0x0a]), // Sleep preset
     p1035: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x33, 0x35, 0x0a]), // Sleep preset 2
+    p1045: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x34, 0x35, 0x0a]), // Alternate preset seen in logs
+    // Streaming commands
+    d: new Uint8Array([0x02, 0x64, 0x0a]), // Start data(short command)
     dc001: new Uint8Array([0x06, 0x64, 0x63, 0x30, 0x30, 0x31, 0x0a]), // Start streaming
     L1: new Uint8Array([0x03, 0x4c, 0x31, 0x0a]), // L1 command
 };
@@ -48,7 +59,7 @@ const ATHENA_COMMANDS = {
  * - 0x12: EEG data (8 channels, 2 samples, 256 Hz)
  * - 0x47: ACC/GYRO data (3 samples, 52 Hz)
  * - 0x34: Optical data (3 samples, 64 Hz)
- * - 0x98: Battery data (10 values, 0.1 Hz)
+ * - 0x88: Battery data (10 values, 1 Hz) [firmware update: was 0x98]
  */
 export class MuseAthenaClient {
     deviceName: string | null = '';
@@ -57,7 +68,7 @@ export class MuseAthenaClient {
     // Athena streaming observables (compatible with muse.ts)
     rawControlData!: Observable<string>;
     controlResponses!: Observable<MuseControlResponse>;
-    eegReadings!: Observable<AthenaEEGReading>; // EEG with channel info
+    eegReadings!: Observable<EEGReading>; // EEG with channel info
     accGyroReadings!: Observable<AthenaAccGyroSample>; // IMU samples
     opticalReadings!: Observable<AthenaOpticalReading>; // Optical/PPG with channel
     batteryData!: Observable<AthenaBatteryData>;
@@ -76,24 +87,65 @@ export class MuseAthenaClient {
     private lastOpticalIndex: number | null = null;
     private lastOpticalTimestamp: number | null = null;
 
-    // Locate a specific tag inside a packet, even if the notification contains a leading header.
-    private findTaggedPacket(packet: Uint8Array, tag: number): [number, AthenaEntry[]] | null {
-        for (let i = 0; i < packet.length; i++) {
-            if (packet[i] !== tag) continue;
-            try {
-                const [, typeName, entries] = parsePacket(packet, tag, i, false);
-                if (typeName.startsWith('UNKNOWN')) continue;
-                if (i > 0) {
-                    console.log(
-                        `[Athena] Found tag 0x${tag.toString(16)} at offset ${i} (skipped ${i} bytes of header?)`,
-                    );
-                }
-                return [i, entries];
-            } catch (err) {
-                console.error(`[Athena] Failed to parse tag 0x${tag.toString(16)} at offset ${i}:`, err);
-            }
+    private logRawAthenaPacket(uuid: string, packet: Uint8Array) {
+        const timestamp = new Date().toISOString();
+        const hex = Array.from(packet, (b) => b.toString(16).padStart(2, '0')).join('');
+        console.log(`${timestamp}\t${uuid}\t${hex}`);
+
+        // Packet structure (from data_p1045.txt analysis):
+        // Byte 0: length (1 byte)
+        // Byte 1: counter (1 byte, wraps 00->ff->00)
+        // Bytes 2-8: unknown (7 bytes)
+        // Byte 9: tag/packet id (0x12, 0x34, 0x47, 0x88)
+        // Bytes 10-13: unknown (4 bytes, first likely counter)
+        // Bytes 14+: payload
+
+        if (packet.length < 10) {
+            console.log(`[Athena][raw] packet too short (${packet.length} bytes)`);
+            return;
         }
-        return null;
+
+        const lenField = packet[0];
+        const counter = packet[1];
+        const tag = packet[9];
+        const payloadCounter = packet[10];
+
+        const knownTags = new Set([0x12, 0x34, 0x47, 0x88]);
+        const isKnownTag = knownTags.has(tag);
+
+        console.log(
+            `[Athena][raw] len=${lenField} counter=${counter.toString(16).padStart(2, '0')} tag=0x${tag
+                .toString(16)
+                .padStart(2, '0')}${isKnownTag ? '' : ' (UNKNOWN)'} payloadCounter=${payloadCounter}`,
+        );
+    }
+
+    // Locate a specific tag inside a packet at the expected offset, accounting for fixed header.
+    private findTaggedPacket(packet: Uint8Array, tag: number): [number, AthenaEntry[]] | null {
+        // Expected tag position: byte 9 (after len, counter, 7 unknown bytes)
+        const tagOffset = 9;
+
+        if (packet.length <= tagOffset) {
+            return null;
+        }
+
+        const actualTag = packet[tagOffset];
+        if (actualTag !== tag) {
+            // Tag not found at expected location
+            return null;
+        }
+
+        try {
+            // parsePacket expects tagIndex pointing to the tag byte
+            const [, typeName, entries] = parsePacket(packet, tag, tagOffset, false);
+            if (typeName.startsWith('UNKNOWN')) {
+                return null;
+            }
+            return [tagOffset, entries];
+        } catch (err) {
+            console.error(`[Athena] Failed to parse tag 0x${tag.toString(16)} at offset ${tagOffset}:`, err);
+            return null;
+        }
     }
 
     async connect(gatt?: BluetoothRemoteGATTServer) {
@@ -147,7 +199,11 @@ export class MuseAthenaClient {
         // Control characteristic (for commands and device info)
         this.controlChar = await service.getCharacteristic(ATHENA_CONTROL_CHAR_UUID);
         this.rawControlData = (await observableCharacteristic(this.controlChar)).pipe(
-            map((data) => decodeResponse(new Uint8Array(data.buffer))),
+            map((data) => {
+                const packet = new Uint8Array(data.buffer);
+                this.logRawAthenaPacket(this.controlChar.uuid, packet);
+                return decodeResponse(packet);
+            }),
             share(),
         );
         this.controlResponses = parseControl(this.rawControlData);
@@ -174,6 +230,7 @@ export class MuseAthenaClient {
         const sensorObservable = (await observableCharacteristic(this.athenaSensorChar)).pipe(
             map((data) => {
                 const packet = new Uint8Array(data.buffer);
+                this.logRawAthenaPacket(this.athenaSensorChar.uuid, packet);
                 console.log(
                     `[Athena] Raw packet received (${packet.length} bytes), tag: 0x${packet[0]?.toString(16).padStart(2, '0')}`,
                 );
@@ -200,7 +257,7 @@ export class MuseAthenaClient {
             share(),
         );
 
-        // Athena Battery data (tag 0x98)
+        // Athena Battery data (tag 0x88)
         this.batteryData = sensorObservable.pipe(
             map((packet) => this.parseAthenaBatteryPacket(packet)),
             filter((data) => data !== null),
@@ -211,7 +268,7 @@ export class MuseAthenaClient {
         this.connectionStatus.next(true);
     }
 
-    private parseAthenaEegPacket(packet: Uint8Array): Observable<AthenaEEGReading> {
+    private parseAthenaEegPacket(packet: Uint8Array): Observable<EEGReading> {
         return new Observable((observer) => {
             if (packet.length < 1) {
                 observer.complete();
@@ -238,7 +295,7 @@ export class MuseAthenaClient {
 
             // Muse Athena has 8 EEG channels, 2 samples each = 16 samples
             // Generate one reading per channel (like muse.ts does)
-            const channelNames = ['TP9', 'AF7', 'AF8', 'TP10', 'FPz', 'AUX_R', 'AUX_L', 'AUX'];
+
             const eventIndex = this.getAthenaEventIndex();
 
             for (let ch = 0; ch < 8 && ch * 2 < allSamples.length; ch++) {
@@ -316,7 +373,6 @@ export class MuseAthenaClient {
 
             const [, entries] = found;
             const eventIndex = this.getAthenaEventIndex();
-            const opticalChannelNames = ['ambient', 'infrared', 'red'];
 
             // Each OPTICAL entry is one sample with 4 values
             for (let i = 0; i < entries.length; i++) {
@@ -340,7 +396,7 @@ export class MuseAthenaClient {
 
     private parseAthenaBatteryPacket(packet: Uint8Array): AthenaBatteryData | null {
         if (packet.length < 1) return null;
-        const found = this.findTaggedPacket(packet, 0x98);
+        const found = this.findTaggedPacket(packet, 0x88);
         if (!found) return null;
 
         const [, entries] = found;
@@ -367,18 +423,18 @@ export class MuseAthenaClient {
         await this.controlChar.writeValueWithoutResponse(cmdBytes);
     }
 
-    async start(preset: string = 'p1034') {
+    async start(preset: string = 'p1045') {
         // NOTE: observableCharacteristic already called startNotifications in connect()
         console.log('[Athena] Starting initialization sequence');
 
-        // Athena startup sequence (matching Python muse_stream_client.py)
-        // 1. Get device info (v6)
-        console.log('[Athena] Sending version check (v6)...');
-        await this.sendCommand('v6');
+        // Athena startup sequence
+        // 1. Get device info (v4)
+        console.log('[Athena] Sending version check ...');
+        await this.sendCommand('v4');
         await this.delay(100);
 
         // 2. Status check
-        console.log('[Athena] Sending status check (s)...');
+        console.log('[Athena] Sending status check ...');
         await this.sendCommand('s');
         await this.delay(100);
 

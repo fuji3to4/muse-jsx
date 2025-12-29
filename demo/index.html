@@ -42,8 +42,16 @@
 <body>
     <div class="controls">
         <button id="connect-button">Connect!</button>
+        <button id="disconnect-button" disabled>Disconnect</button>
         <label class="no-select">
             <input type="checkbox" id="aux-toggle" /> Enable AUX channel
+        </label>
+        <label class="no-select">
+            Mode:
+            <select id="device-mode">
+                <option value="athena">Athena</option>
+                <option value="muse">Muse (classic)</option>
+            </select>
         </label>
     </div>
 
@@ -54,7 +62,7 @@
     </div>
 
     <div>
-        Temperature: <span id="temperature">unknown</span>, Battery: <span id="batteryLevel">unknown</span>
+        Battery: <span id="batteryLevel">unknown</span>
     </div>
 
     <div>
@@ -89,9 +97,22 @@
             <h3>Electrode 5</h3>
             <canvas id="electrode5"></canvas>
         </div>
+        <div class="electrode-item">
+            <h3>Electrode 6</h3>
+            <canvas id="electrode6"></canvas>
+        </div>
+        <div class="electrode-item">
+            <h3>Electrode 7</h3>
+            <canvas id="electrode7"></canvas>
+        </div>
+
+        <div class="electrode-item">
+            <h3>Electrode 8</h3>
+            <canvas id="electrode8"></canvas>
+        </div>
     </div>
 
-    <script type="module" src="./src/main_athena.ts"></script>
+    <script type="module" src="./src/loader.ts"></script>
 </body>
 
 </html>

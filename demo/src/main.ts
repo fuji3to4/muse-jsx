@@ -1,7 +1,11 @@
 // tslint:disable:no-console
 
-import { MuseClient, channelNames } from '../../src/muse';
+import { MuseClient, channelNames, zipSamples } from '../../src/muse';
 import type { EEGReading } from '../../src/muse';
+import { notchFilter, epoch } from '@neurosity/pipes';
+import { tap } from 'rxjs';
+
+let client: MuseClient | null = null;
 
 async function connect() {
     const graphTitles = Array.from(document.querySelectorAll('.electrode-item h3'));
@@ -33,9 +37,10 @@ async function connect() {
         }
     }
 
-    const client = new MuseClient();
+    client = new MuseClient();
     client.connectionStatus.subscribe((status) => {
         console.log(status ? 'Connected!' : 'Disconnected');
+        updateButtonStates(status);
     });
 
     try {
@@ -43,11 +48,28 @@ async function connect() {
         const auxToggle = document.getElementById('aux-toggle') as HTMLInputElement | null;
         client.enableAux = !!auxToggle?.checked;
         await client.connect();
+
+        // Subscribe to EEG BEFORE start to avoid missing data
+        const nbChannels = client.enableAux ? 5 : 4;
+        client.eegReadings
+            .pipe(
+                tap((reading) => {
+                    console.log('Raw EEG', reading);
+                    plot(reading);
+                }),
+                zipSamples,
+                notchFilter({ nbChannels, cutoffFrequency: 60 }),
+                tap((sample) => {
+                    console.log('Filtered EEG', sample);
+                }),
+                epoch({ duration: 256, interval: 25 }),
+            )
+            .subscribe((ep) => {
+                console.log('epoch', ep);
+            });
+
         await client.start();
         document.getElementById('headset-name')!.innerText = client.deviceName ?? 'unknown';
-        client.eegReadings.subscribe((reading) => {
-            plot(reading);
-        });
         client.telemetryData.subscribe((reading) => {
             document.getElementById('temperature')!.innerText = reading.temperature.toString() + '℃';
             document.getElementById('batteryLevel')!.innerText = reading.batteryLevel.toFixed(2) + '%';
@@ -67,12 +89,32 @@ async function connect() {
     }
 }
 
-// ページ読み込み後にボタンにイベントリスナーを追加
-document.addEventListener('DOMContentLoaded', () => {
-    const connectButton = document.querySelector('button');
-    if (connectButton) {
-        connectButton.addEventListener('click', connect);
+async function disconnect() {
+    if (client) {
+        await client.disconnect();
+        client = null;
+        console.log('Disconnected');
     }
+}
+
+function updateButtonStates(connected: boolean) {
+    const connectButton = document.getElementById('connect-button') as HTMLButtonElement;
+    const disconnectButton = document.getElementById('disconnect-button') as HTMLButtonElement;
+    if (connectButton) connectButton.disabled = connected;
+    if (disconnectButton) disconnectButton.disabled = !connected;
+}
+
+// ページ読み込み後にボタンにイベントリスナーを追加
+function initUI() {
+    const connectButton = document.getElementById('connect-button');
+    const disconnectButton = document.getElementById('disconnect-button');
+    if (connectButton) {
+        (connectButton as HTMLButtonElement).addEventListener('click', connect);
+    }
+    if (disconnectButton) {
+        (disconnectButton as HTMLButtonElement).addEventListener('click', disconnect);
+    }
+    updateButtonStates(false);
     // AUX 未使用時は AUX 用 UI を隠す
     const auxToggle = document.getElementById('aux-toggle') as HTMLInputElement | null;
     const electrodeItems = Array.from(document.querySelectorAll('.electrode-item')) as HTMLElement[];
@@ -85,4 +127,10 @@ document.addEventListener('DOMContentLoaded', () => {
         auxToggle.addEventListener('change', updateAuxVisibility);
         updateAuxVisibility();
     }
-});
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initUI);
+} else {
+    initUI();
+}

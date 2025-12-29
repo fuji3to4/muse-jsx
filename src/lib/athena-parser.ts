@@ -6,7 +6,10 @@
  * - 0x12: EEG (8 channels, 2 samples, 14-bit, 256 Hz)
  * - 0x47: ACC_GYRO (3 samples, 12-bit, 52 Hz)
  * - 0x34: OPTICAL (3 samples, 20-bit, 64 Hz)
- * - 0x98: BATTERY (10 16-bit values, 0.1 Hz)
+ * - 0x88: BATTERY (10 16-bit values, 1 Hz)  [firmware update: was 0x98]
+ *
+ * NOTE: parsePacket() expects tagIndex pointing to the tag byte at the packet header.
+ * Use findTaggedPacket() from muse-athena.ts for BLE notification packets with headers.
  */
 
 export interface AthenaEntry {
@@ -95,10 +98,8 @@ export function parsePacket(
             const values = parseUint14LEValues(block28);
 
             // Scale 14-bit values to microvolts
-            // Following amused-py: EEG_SCALE = 1000.0 / 2048.0 for 12-bit
-            // Athena uses 14-bit, so scale proportionally: 1000 / (2^11) = 1000 / 2048 ≈ 0.488 µV/LSB
-            // This maintains consistent µV output range across both protocols
-            const scaled = values.map((v) => v * (1000 / 2048));
+            // MuseAthenaDataformatParser uses 1450 µV for full scale (2^14 - 1 = 16383)
+            const scaled = values.map((v) => v * (1450 / 16383));
 
             if (verbose) {
                 console.log('EEG:', scaled.slice(0, 8));
@@ -130,11 +131,11 @@ export function parsePacket(
                 const accRaw = vals.slice(base, base + 3);
                 const gyroRaw = vals.slice(base + 3, base + 6);
 
-                // Following amused-py IMU scaling:
-                // ACCEL_SCALE = 2.0 / 32768.0  (±2G range) ≈ 0.000061 G per LSB
-                // GYRO_SCALE = 250.0 / 32768.0 (±250 dps range) ≈ 0.00763 dps per LSB
-                const accScaled = accRaw.map((x) => x * (2.0 / 32768.0));
-                const gyroScaled = gyroRaw.map((x) => x * (250.0 / 32768.0));
+                // Following amused-py IMU scaling (MuseAthenaDataformatParser uses this scaling)
+                // ACCEL_SCALE = 2.0 / 32768(=2^15)  (±2G range) ≈ 0.000061 G per LSB
+                // GYRO_SCALE = 250.0 / 32768(=2^15) (±250 dps range) ≈ 0.00763 dps per LSB
+                const accScaled = accRaw.map((x) => x * 0.0000610352);
+                const gyroScaled = gyroRaw.map((x) => x * -0.0074768);
 
                 if (verbose) {
                     console.log(`ACC: ${accScaled}`);
@@ -172,43 +173,60 @@ export function parsePacket(
                     const intValue = bitsToInt(bits, bitStart, 20);
                     sampleValues.push(intValue);
                 }
+                const scaled = sampleValues.map((x) => x / 32768);
 
-                // PPG/Optical uses 20-bit resolution (0-1048575)
-                // No specific scaling found in amused-py, keeping raw values
-                // Typical PPG analysis works with relative changes, not absolute scale
                 if (verbose) {
-                    console.log(`Sample ${sample + 1}: ${sampleValues}`);
+                    console.log(`Sample ${sample + 1}: ${scaled}`);
                 }
 
-                entries.push({ type: 'OPTICAL', data: sampleValues });
+                entries.push({ type: 'OPTICAL', data: scaled });
             }
 
             return [endIndex, 'OPTICAL', entries, 3];
         }
 
-        case 0x98: {
-            // BATTERY: 10x 16-bit unsigned integers at 0.1 Hz
+        case 0x88: {
+            // BATTERY: 10x 16-bit unsigned integers at 1 Hz
+            // Skip 4 bytes, then parse 10 16-bit unsigned integers
+            // 10 * 16 bits = 160 bits = 20 bytes
+
             const bytesNeeded = 20;
             const endIndex = payloadStart + bytesNeeded;
             if (endIndex > data.length) {
-                throw new Error(`Not enough data for tag 0x98: need ${endIndex}, have ${data.length}`);
+                throw new Error(`Not enough data for tag 0x88: need ${endIndex}, have ${data.length}`);
             }
 
+            // ###1st ayyempt: return raw values without interpretation
+
+            // const block = data.subarray(payloadStart, endIndex);
+            // const view = new DataView(block.buffer, block.byteOffset);
+
+            // const values: number[] = [];
+            // for (let i = 0; i < 10; i++) {
+            //     // Read as little-endian 16-bit unsigned integers
+            //     const value = view.getUint16(i * 2, true);
+            //     values.push(value);
+            // }
+
+            // ### 2nd attempt: parse as bits (like other packets)
+
             const block = data.subarray(payloadStart, endIndex);
-            const view = new DataView(block.buffer, block.byteOffset);
+            const bits = bytesToBitarray(block);
 
             const values: number[] = [];
             for (let i = 0; i < 10; i++) {
-                // Read as little-endian 16-bit unsigned integers
-                const value = view.getUint16(i * 2, true);
-                values.push(value);
+                const bitStart = i * 16;
+                const bitEnd = bitStart + 16;
+                if (bitEnd > bits.length) {
+                    throw new Error(`Not enough bits for 16-bit value ${i}`);
+                }
+
+                const intValue = bitsToInt(bits, bitStart, 16);
+                values.push(intValue);
             }
 
-            // Battery data format is not yet reverse-engineered for Athena
-            // Returning raw 10x 16-bit values for future interpretation
-            // TODO: Determine correct interpretation when protocol is documented
             if (verbose) {
-                console.log(`BATTERY raw: ${values}`);
+                console.log(`BATTERY: ${values}`);
             }
 
             return [endIndex, 'BATTERY', [{ type: 'BATTERY', data: values }], 1];
