@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../amused-py"
+		},
+		{
+			"path": "../MuseAthenaDataformatParser"
+		}
+	],
+	"settings": {
+		"liveServer.settings.multiRootWorkspaceName": "muse-jsx"
+	}
+}

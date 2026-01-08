@@ -36,7 +36,7 @@ export const opticalChannelNames = ['ambient', 'infrared', 'red'];
 export const channelNames = ['TP9', 'AF7', 'AF8', 'TP10', 'FPz', 'AUX_R', 'AUX_L', 'AUX'];
 
 // Athena commands (matching Python implementation)
-const ATHENA_COMMANDS = {
+export const ATHENA_COMMANDS = {
     v4: new Uint8Array([0x03, 0x76, 0x34, 0x0a]), // Version
     v6: new Uint8Array([0x03, 0x76, 0x36, 0x0a]), // Version
     s: new Uint8Array([0x02, 0x73, 0x0a]), // Status
@@ -51,6 +51,9 @@ const ATHENA_COMMANDS = {
     dc001: new Uint8Array([0x06, 0x64, 0x63, 0x30, 0x30, 0x31, 0x0a]), // Start streaming
     L1: new Uint8Array([0x03, 0x4c, 0x31, 0x0a]), // L1 command
 };
+
+export type AthenaPreset = 'p21' | 'p1034' | 'p1035' | 'p1045';
+export const ATHENA_PRESETS: AthenaPreset[] = ['p21', 'p1034', 'p1035', 'p1045'];
 
 /**
  * MuseAthennaClient - Bluetooth client for Athena-based Muse headsets
@@ -73,6 +76,9 @@ export class MuseAthenaClient {
     opticalReadings!: Observable<AthenaOpticalReading>; // Optical/PPG with channel
     batteryData!: Observable<AthenaBatteryData>;
 
+    // Raw packet stream for logging/debugging
+    rawPackets = new Subject<{ timestamp: number; uuid: string; data: Uint8Array }>();
+
     eventMarkers: Subject<EventMarker> = new Subject();
 
     private gatt: BluetoothRemoteGATTServer | null = null;
@@ -88,6 +94,13 @@ export class MuseAthenaClient {
     private lastOpticalTimestamp: number | null = null;
 
     private logRawAthenaPacket(uuid: string, packet: Uint8Array) {
+        // Emit to subject for external logging
+        this.rawPackets.next({
+            timestamp: Date.now(),
+            uuid,
+            data: packet,
+        });
+
         const timestamp = new Date().toISOString();
         const hex = Array.from(packet, (b) => b.toString(16).padStart(2, '0')).join('');
         console.log(`${timestamp}\t${uuid}\t${hex}`);

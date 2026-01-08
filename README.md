@@ -2,8 +2,7 @@
 
 Note (credit and provenance)
 
-This repository is a derivative of the original muse-js ([muse-js](https://github.com/urish/muse-js)), modified mainly via AI agent–assisted edits. All credit and copyright belong to the original authors and contributors of urish/muse-js. This repository does not claim originality. See the bundled LICENSE.
-
+This repository is a derivative of the original muse-js ([muse-js](https://github.com/urish/muse-js)), modified mainly via AI agent–assisted edits. 
 
  Muse 1, Muse 2, and Muse S EEG Headset JavaScript Library (using Web Bluetooth).
  Reconstruct muse-js from source code.
@@ -47,6 +46,37 @@ and then open <http://localhost:4445/>
     }
 
     main();
+
+## 🧪 Experimental Support: Muse S (Athena Model)
+
+We are currently testing support for the **Muse S (Athena)** devices.
+> **Note:** The original Muse S works with the classic `MuseClient`. This "Athena" client is specifically for newer Muse S units using the Athena protocol, which is incompatible with the classic logic.
+
+**Supported Features (Beta):**
+- Real-time EEG (8 channels, 256Hz)
+- Accelerometer & Gyroscope (IMU)
+- PPG / Optical Sensors
+- Battery Status
+- **Preset Selection** (e.g., `p1045`, `p21`) and **Packet Logging**
+
+**Usage:**
+Instead of `MuseClient`, use the new `MuseAthenaClient`:
+
+```typescript
+import { MuseAthenaClient } from './src/muse-athena';
+
+const client = new MuseAthenaClient();
+await client.connect();
+await client.start('p1045'); // Start with a specific preset
+
+client.athenaEegReadings.subscribe(reading => {
+  console.log(reading.samples);
+});
+```
+
+For detailed instructions and migration tips, please refer to:
+- [ATHENA_SUPPORT.md](docs/ATHENA_SUPPORT.md)
+- [MIGRATION_GUIDE.md](docs/MIGRATION_GUIDE.md)
 
 ## Host the demo on GitHub Pages
 
