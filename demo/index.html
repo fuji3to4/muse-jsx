@@ -40,79 +40,8 @@
 </head>
 
 <body>
-    <div class="controls">
-        <button id="connect-button">Connect!</button>
-        <button id="disconnect-button" disabled>Disconnect</button>
-        <label class="no-select">
-            <input type="checkbox" id="aux-toggle" /> Enable AUX channel
-        </label>
-        <label class="no-select">
-            Mode:
-            <select id="device-mode">
-                <option value="athena">Athena</option>
-                <option value="muse">Muse (classic)</option>
-            </select>
-        </label>
-    </div>
-
-    <div>
-        Name: <span id="headset-name">unknown</span>
-        Firmware: <span id="firmware-version">unknown</span>,
-        Hardware version: <span id="hardware-version">unknown</span>.
-    </div>
-
-    <div>
-        Battery: <span id="batteryLevel">unknown</span>
-    </div>
-
-    <div>
-        Accelerometer: x=<span 
-        id="accelerometer-x">?</span>, y=<span 
-        id="accelerometer-y">?</span>, z=<span 
-        id="accelerometer-z">?</span>
-    </div>
-
-    <div class="electrode-section">
-        <div class="electrode-item">
-            <h3>Electrode 1</h3>
-            <canvas id="electrode1"></canvas>
-        </div>
-
-        <div class="electrode-item">
-            <h3>Electrode 2</h3>
-            <canvas id="electrode2"></canvas>
-        </div>
-
-        <div class="electrode-item">
-            <h3>Electrode 3</h3>
-            <canvas id="electrode3"></canvas>
-        </div>
-
-        <div class="electrode-item">
-            <h3>Electrode 4</h3>
-            <canvas id="electrode4"></canvas>
-        </div>
-
-        <div class="electrode-item">
-            <h3>Electrode 5</h3>
-            <canvas id="electrode5"></canvas>
-        </div>
-        <div class="electrode-item">
-            <h3>Electrode 6</h3>
-            <canvas id="electrode6"></canvas>
-        </div>
-        <div class="electrode-item">
-            <h3>Electrode 7</h3>
-            <canvas id="electrode7"></canvas>
-        </div>
-
-        <div class="electrode-item">
-            <h3>Electrode 8</h3>
-            <canvas id="electrode8"></canvas>
-        </div>
-    </div>
-
-    <script type="module" src="./src/loader.ts"></script>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
 </body>
 
 </html>

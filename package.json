@@ -24,8 +24,11 @@
   "devDependencies": {
     "@types/jest": "^29.5.13",
     "@types/node": "^20.11.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
     "@typescript-eslint/eslint-plugin": "^8.11.0",
     "@typescript-eslint/parser": "^8.11.0",
+    "@vitejs/plugin-react": "^5.1.2",
     "eslint": "^9.13.0",
     "eslint-config-prettier": "^9.1.0",
     "husky": "^9.1.6",
@@ -41,6 +44,9 @@
   "dependencies": {
     "@neurosity/pipes": "^5.2.1",
     "@types/web-bluetooth": "^0.0.20",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "recharts": "^3.6.0",
     "rxjs": "^7.8.1"
   },
   "jest": {

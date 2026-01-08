@@ -7,3 +7,4 @@ dist-demo
 .DS_Store
 coverage
 muse-jsx.code-workspace
+docs

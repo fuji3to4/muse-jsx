@@ -408,6 +408,9 @@ export class MuseAthenaClient {
             }
         }
 
+        // log all battery values
+        console.log(`[Athena] Battery packet: ${values}`);
+
         return {
             timestamp: new Date().getTime(),
             values,
