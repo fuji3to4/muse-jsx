@@ -3,7 +3,7 @@
  * Support for new Athena-based Muse headsets with tag-based packet protocol
  */
 
-import { BehaviorSubject, firstValueFrom, fromEvent, Observable, Subject } from 'rxjs';
+import { BehaviorSubject, firstValueFrom, fromEvent, merge, Observable, Subject } from 'rxjs';
 import { filter, first, map, share, take, mergeMap } from 'rxjs';
 
 import type {
@@ -15,6 +15,7 @@ import type {
     XYZ,
     MuseControlResponse,
     MuseDeviceInfo,
+    RawAthenaPacket,
 } from './lib/muse-interfaces';
 import { parseControl } from './lib/muse-parse';
 import { decodeResponse, observableCharacteristic } from './lib/muse-utils';
@@ -77,7 +78,8 @@ export class MuseAthenaClient {
     batteryData!: Observable<AthenaBatteryData>;
 
     // Raw packet stream for logging/debugging
-    rawPackets = new Subject<{ timestamp: number; uuid: string; data: Uint8Array }>();
+    rawPackets!: Observable<RawAthenaPacket>;
+    private commandLock: Promise<void> = Promise.resolve();
 
     eventMarkers: Subject<EventMarker> = new Subject();
 
@@ -92,46 +94,6 @@ export class MuseAthenaClient {
     private lastAccGyroTimestamp: number | null = null;
     private lastOpticalIndex: number | null = null;
     private lastOpticalTimestamp: number | null = null;
-
-    private logRawAthenaPacket(uuid: string, packet: Uint8Array) {
-        // Emit to subject for external logging
-        this.rawPackets.next({
-            timestamp: Date.now(),
-            uuid,
-            data: packet,
-        });
-
-        const timestamp = new Date().toISOString();
-        const hex = Array.from(packet, (b) => b.toString(16).padStart(2, '0')).join('');
-        console.log(`${timestamp}\t${uuid}\t${hex}`);
-
-        // Packet structure (from data_p1045.txt analysis):
-        // Byte 0: length (1 byte)
-        // Byte 1: counter (1 byte, wraps 00->ff->00)
-        // Bytes 2-8: unknown (7 bytes)
-        // Byte 9: tag/packet id (0x12, 0x34, 0x47, 0x88)
-        // Bytes 10-13: unknown (4 bytes, first likely counter)
-        // Bytes 14+: payload
-
-        if (packet.length < 10) {
-            console.log(`[Athena][raw] packet too short (${packet.length} bytes)`);
-            return;
-        }
-
-        const lenField = packet[0];
-        const counter = packet[1];
-        const tag = packet[9];
-        const payloadCounter = packet[10];
-
-        const knownTags = new Set([0x12, 0x34, 0x47, 0x88]);
-        const isKnownTag = knownTags.has(tag);
-
-        console.log(
-            `[Athena][raw] len=${lenField} counter=${counter.toString(16).padStart(2, '0')} tag=0x${tag
-                .toString(16)
-                .padStart(2, '0')}${isKnownTag ? '' : ' (UNKNOWN)'} payloadCounter=${payloadCounter}`,
-        );
-    }
 
     // Locate a specific tag inside a packet at the expected offset, accounting for fixed header.
     private findTaggedPacket(packet: Uint8Array, tag: number): [number, AthenaEntry[]] | null {
@@ -211,11 +173,21 @@ export class MuseAthenaClient {
 
         // Control characteristic (for commands and device info)
         this.controlChar = await service.getCharacteristic(ATHENA_CONTROL_CHAR_UUID);
-        this.rawControlData = (await observableCharacteristic(this.controlChar)).pipe(
-            map((data) => {
-                const packet = new Uint8Array(data.buffer);
-                this.logRawAthenaPacket(this.controlChar.uuid, packet);
-                return decodeResponse(packet);
+        const controlObservable = (await observableCharacteristic(this.controlChar)).pipe(
+            map((data) => ({
+                uuid: this.controlChar.uuid,
+                data: new Uint8Array(data.buffer),
+            })),
+            share(),
+        );
+
+        this.rawControlData = controlObservable.pipe(
+            map((p) => {
+                // Athena fallback: if it doesn't look like a classic length-prefixed packet, decode fully
+                if (p.data[0] > p.data.length) {
+                    return new TextDecoder().decode(p.data);
+                }
+                return decodeResponse(p.data);
             }),
             share(),
         );
@@ -239,39 +211,45 @@ export class MuseAthenaClient {
 
         this.athenaSensorChar = sensorChar;
 
-        // Create observables from sensor packets
         const sensorObservable = (await observableCharacteristic(this.athenaSensorChar)).pipe(
-            map((data) => {
-                const packet = new Uint8Array(data.buffer);
-                this.logRawAthenaPacket(this.athenaSensorChar.uuid, packet);
-                console.log(
-                    `[Athena] Raw packet received (${packet.length} bytes), tag: 0x${packet[0]?.toString(16).padStart(2, '0')}`,
-                );
-                return packet;
-            }),
+            map((data) => ({
+                uuid: this.athenaSensorChar.uuid,
+                data: new Uint8Array(data.buffer),
+            })),
+            share(),
+        );
+
+        // Combined raw packets for the logger
+        this.rawPackets = merge(controlObservable, sensorObservable).pipe(
+            map((p) => ({ ...p, timestamp: Date.now() })),
+            share(),
+        );
+
+        const rawSensorPackets$ = sensorObservable.pipe(
+            map((p) => p.data),
             share(),
         );
 
         // Athena EEG readings (tag 0x12) - 8 channels x 2 samples each
-        this.eegReadings = sensorObservable.pipe(
+        this.eegReadings = rawSensorPackets$.pipe(
             mergeMap((packet) => this.parseAthenaEegPacket(packet)),
             share(),
         );
 
         // Athena ACC/GYRO readings (tag 0x47) - 3 samples each
-        this.accGyroReadings = sensorObservable.pipe(
+        this.accGyroReadings = rawSensorPackets$.pipe(
             mergeMap((packet) => this.parseAthenaAccGyroPacket(packet)),
             share(),
         );
 
         // Athena Optical readings (tag 0x34) - 3 samples each
-        this.opticalReadings = sensorObservable.pipe(
+        this.opticalReadings = rawSensorPackets$.pipe(
             mergeMap((packet) => this.parseAthenaOpticalPacket(packet)),
             share(),
         );
 
         // Athena Battery data (tag 0x88)
-        this.batteryData = sensorObservable.pipe(
+        this.batteryData = rawSensorPackets$.pipe(
             map((packet) => this.parseAthenaBatteryPacket(packet)),
             filter((data) => data !== null),
             map((data) => data as AthenaBatteryData),
@@ -304,12 +282,7 @@ export class MuseAthenaClient {
                 }
             }
 
-            console.log(`[Athena] EEG packet: ${allSamples.length} samples (${allSamples.length / 2} channels x 2)`);
-
-            // Muse Athena has 8 EEG channels, 2 samples each = 16 samples
-            // Generate one reading per channel (like muse.ts does)
-
-            const eventIndex = this.getAthenaEventIndex();
+            const eventIndex = packet[1];
 
             for (let ch = 0; ch < 8 && ch * 2 < allSamples.length; ch++) {
                 const samples = allSamples.slice(ch * 2, ch * 2 + 2);
@@ -342,7 +315,7 @@ export class MuseAthenaClient {
             }
 
             const [, entries] = found;
-            const eventIndex = this.getAthenaEventIndex();
+            const eventIndex = packet[1];
             let sampleCount = 0;
 
             // Parse ACC and GYRO entries
@@ -366,7 +339,6 @@ export class MuseAthenaClient {
                 }
             }
 
-            console.log(`[Athena] ACC/GYRO packet: ${sampleCount} samples`);
             observer.complete();
         });
     }
@@ -385,7 +357,7 @@ export class MuseAthenaClient {
             }
 
             const [, entries] = found;
-            const eventIndex = this.getAthenaEventIndex();
+            const eventIndex = packet[1];
 
             // Each OPTICAL entry is one sample with 4 values
             for (let i = 0; i < entries.length; i++) {
@@ -402,7 +374,6 @@ export class MuseAthenaClient {
                 }
             }
 
-            console.log(`[Athena] Optical packet: ${entries.length} samples`);
             observer.complete();
         });
     }
@@ -435,8 +406,14 @@ export class MuseAthenaClient {
         if (!cmdBytes) {
             throw new Error(`Unknown Athena command: ${cmd}`);
         }
-        console.log(`[Athena] Sending command: ${cmd}`);
-        await this.controlChar.writeValueWithoutResponse(cmdBytes);
+
+        this.commandLock = this.commandLock.then(async () => {
+            console.log(`[Athena] Sending command: ${cmd}`);
+            await this.controlChar.writeValueWithoutResponse(cmdBytes);
+            await this.delay(50);
+        });
+
+        return this.commandLock;
     }
 
     async start(preset: string = 'p1045') {
@@ -515,7 +492,7 @@ export class MuseAthenaClient {
 
     disconnect() {
         if (this.gatt) {
-            // Reset timestamp tracking
+            // Reset tracking and counters
             this.lastEegIndex = null;
             this.lastEegTimestamp = null;
             this.lastAccGyroIndex = null;
@@ -530,11 +507,6 @@ export class MuseAthenaClient {
 
     private delay(ms: number): Promise<void> {
         return new Promise((resolve) => setTimeout(resolve, ms));
-    }
-
-    private getAthenaEventIndex(): number {
-        // Simple monotonically increasing index (in real app, extract from packet)
-        return Math.floor(new Date().getTime() / 10);
     }
 
     private getAthenaTimestamp(
@@ -564,9 +536,9 @@ export class MuseAthenaClient {
             lastTimestamp = new Date().getTime() - READING_DELTA;
         }
 
-        // Handle wrap around (like muse.ts)
-        while (lastIndex - eventIndex > 0x1000) {
-            eventIndex += 0x10000;
+        // Handle wrap around (8-bit counter 0-255)
+        while (lastIndex - eventIndex > 128) {
+            eventIndex += 256;
         }
 
         let newTimestamp = lastTimestamp;

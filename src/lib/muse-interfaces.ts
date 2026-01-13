@@ -78,3 +78,9 @@ export interface AthenaBatteryData {
     timestamp: number;
     values: number[]; // 10 battery values
 }
+
+export interface RawAthenaPacket {
+    timestamp: number;
+    uuid: string;
+    data: Uint8Array;
+}

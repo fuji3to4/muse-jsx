@@ -39,18 +39,21 @@ function bytesToBitarray(data: Uint8Array): number[] {
 }
 
 /**
- * Parse unsigned 14-bit little-endian values from bit array
+ * Parse unsigned 14-bit little-endian values from buffer using bitwise operations
  */
 function parseUint14LEValues(buf: Uint8Array): number[] {
-    const bits = bytesToBitarray(buf);
     const width = 14;
-    const nVals = Math.floor(bits.length / width);
+    const nVals = Math.floor((buf.length * 8) / width);
     const out: number[] = [];
 
+    // Working with bits directly from the buffer
     for (let i = 0; i < nVals; i++) {
         let val = 0;
         for (let bitIndex = 0; bitIndex < width; bitIndex++) {
-            if (bits[i * width + bitIndex]) {
+            const totalBitOffset = i * width + bitIndex;
+            const byteOffset = Math.floor(totalBitOffset / 8);
+            const bitInByte = totalBitOffset % 8;
+            if ((buf[byteOffset] >> bitInByte) & 1) {
                 val |= 1 << bitIndex;
             }
         }
@@ -158,27 +161,26 @@ export function parsePacket(
             }
 
             const block = data.subarray(payloadStart, endIndex);
-            const bits = bytesToBitarray(block);
-
             const entries: AthenaEntry[] = [];
+            const bitWidth = 20;
+
             for (let sample = 0; sample < 3; sample++) {
                 const sampleValues: number[] = [];
                 for (let value = 0; value < 4; value++) {
-                    const bitStart = (sample * 4 + value) * 20;
-                    const bitEnd = bitStart + 20;
-                    if (bitEnd > bits.length) {
-                        throw new Error(`Not enough bits for sample ${sample}, value ${value}`);
-                    }
+                    const totalBitStart = (sample * 4 + value) * bitWidth;
 
-                    const intValue = bitsToInt(bits, bitStart, 20);
+                    let intValue = 0;
+                    for (let i = 0; i < bitWidth; i++) {
+                        const bitPos = totalBitStart + i;
+                        const byteOff = bitPos >> 3;
+                        const bitInByte = bitPos & 7;
+                        if ((block[byteOff] >> bitInByte) & 1) {
+                            intValue |= 1 << i;
+                        }
+                    }
                     sampleValues.push(intValue);
                 }
                 const scaled = sampleValues.map((x) => x / 32768);
-
-                if (verbose) {
-                    console.log(`Sample ${sample + 1}: ${scaled}`);
-                }
-
                 entries.push({ type: 'OPTICAL', data: scaled });
             }
 

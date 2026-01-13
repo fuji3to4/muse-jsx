@@ -1,13 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, YAxis, Legend, ResponsiveContainer } from 'recharts';
 import { MuseClient, channelNames as museChannelNames, zipSamples } from '../../src/muse';
-import { MuseAthenaClient, channelNames as athenaChannelNames } from '../../src/muse-athena';
-import { notchFilter } from '@neurosity/pipes';
-import { tap } from 'rxjs';
+import { MuseAthenaClient, channelNames as athenaChannelNames, ATHENA_PRESETS, AthenaPreset } from '../../src/muse-athena';
+import { notchFilter, bandpassFilter } from '@neurosity/pipes';
+import { tap, BehaviorSubject, switchMap, Subscription } from 'rxjs';
+import { AthenaLogger } from './AthenaLogger';
 
 // --- Types ---
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
+
+type FilterSettings = {
+    notchEnabled: boolean;
+    notchFrequency: number;
+    bandpassEnabled: boolean;
+    bandpassLow: number;
+    bandpassHigh: number;
+};
 
 type Reading = {
     index: number;
@@ -17,30 +26,42 @@ type Reading = {
 
 // --- Hook for Muse Logic ---
 
-function useMuse(mode: 'muse' | 'athena', enableAux: boolean, preset: AthenaPreset = 'p1045') {
+function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'logger', preset: AthenaPreset = 'p1045') {
     const [status, setStatus] = useState<ConnectionStatus>('disconnected');
     const [battery, setBattery] = useState<string>('unknown');
     const [accelerometer, setAccelerometer] = useState({ x: 0, y: 0, z: 0 });
-    const [deviceInfo, setDeviceInfo] = useState({ hw: 'unknown', fw: 'unknown', name: 'unknown' });
     const [data, setData] = useState<Reading[]>([]);
-    const [filterEnabled, setFilterEnabled] = useState(false);
 
-    // We keep a mutable buffer to avoid excessive state updates for every sample
-    // But for React to render, we need to update state eventually.
-    // We'll update state at a lower rate (e.g. 30fps)
+    const [filterSettings, setFilterSettings] = useState<FilterSettings>({
+        notchEnabled: true,
+        notchFrequency: 60,
+        bandpassEnabled: true,
+        bandpassLow: 5,
+        bandpassHigh: 40
+    });
+
     const dataBufferRef = React.useRef<Reading[]>([]);
     const clientRef = React.useRef<MuseClient | MuseAthenaClient | null>(null);
+    const subscriptionsRef = React.useRef<Subscription[]>([]);
+    const filterSettings$ = React.useRef(new BehaviorSubject<FilterSettings>(filterSettings));
+
+    // Update the subject when state changes
+    useEffect(() => {
+        filterSettings$.current.next(filterSettings);
+    }, [filterSettings]);
 
     useEffect(() => {
         let animationFrameId: number;
         let lastUpdateTime = 0;
 
         const updateLoop = (timestamp: number) => {
-            if (timestamp - lastUpdateTime > 50) { // Update every 50ms (~20fps)
+            // Bypass graph processing completely if not in graph view
+            if (view !== 'graph') return;
+
+            if (timestamp - lastUpdateTime > 100) { // Update every 100ms (10fps) is enough for EEG
                 if (dataBufferRef.current.length > 0) {
-                    // Keep last 500 points
-                    if (dataBufferRef.current.length > 500) {
-                        dataBufferRef.current = dataBufferRef.current.slice(dataBufferRef.current.length - 500);
+                    if (dataBufferRef.current.length > 250) {
+                        dataBufferRef.current = dataBufferRef.current.slice(dataBufferRef.current.length - 250);
                     }
                     setData([...dataBufferRef.current]);
                 }
@@ -65,92 +86,127 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, preset: AthenaPres
                 client.enableAux = enableAux;
             }
 
+            // Cleanup previous subscriptions if reconnecting
+            subscriptionsRef.current.forEach(s => s.unsubscribe());
+            subscriptionsRef.current = [];
+
+            // Sync connection status with component state
+            subscriptionsRef.current.push(client.connectionStatus.subscribe(connected => {
+                if (!connected && status !== 'disconnected') {
+                    setStatus('disconnected');
+                }
+            }));
+
             await client.connect();
             setStatus('connected');
 
-            setDeviceInfo({
-                hw: 'loading...',
-                fw: 'loading...',
-                name: client.deviceName || 'unknown'
-            });
-
-            client.deviceInfo().then(info => {
-                setDeviceInfo({ hw: info.hw, fw: info.fw, name: client.deviceName || 'unknown' });
-            });
-
-            if (client instanceof MuseClient) { // Muse
-                client.telemetryData.subscribe(t => {
-                    setBattery(t.batteryLevel.toFixed(2) + '%');
-                });
-                client.accelerometerData.subscribe(accel => {
-                    setAccelerometer({ x: accel.samples[2].x, y: accel.samples[2].y, z: accel.samples[2].z });
-                });
-            } else if (client instanceof MuseAthenaClient) { // Athena
-                client.batteryData.subscribe(t => {
-                    setBattery(String(t.values[0] || '?'));
-                });
-                client.accGyroReadings.subscribe(accel => {
-                    setAccelerometer({ x: accel.acc?.x || 0, y: accel.acc?.y || 0, z: accel.acc?.z || 0 });
+            // Handle deviceInfo based on mode
+            if (mode === 'muse') {
+                // Classic Muse needs a moment to stabilize after multiple startNotifications calls
+                // and sequential GATT operations to avoid conflicts
+                await new Promise(resolve => setTimeout(resolve, 500));
+                try {
+                    const info = await client.deviceInfo();
+                    console.log('[useMuse] Classic Device Connected:', info);
+                } catch (err) {
+                    console.warn('Could not retrieve classic device info', err);
+                }
+            } else {
+                // Athena: Non-blocking as requested
+                client.deviceInfo().then(info => {
+                    console.log('[useMuse] Athena Device Connected:', info);
+                }).catch(err => {
+                    console.warn('Could not retrieve Athena device info', err);
                 });
             }
 
-            // EEG Stream
-            const nbChannels = mode === 'athena' ? 8 : (enableAux ? 5 : 4);
-
-            // We need to handle raw vs filtered.
-            // Currently simplest is to stream one or the other based on a toggle, but usually pipes are static.
-            // We can subscribe to valid stream.
-
-            // Let's create a stream that switches? No, difficult with pipes.
-            // We'll process data and push to buffer.
-
-            // Raw stream
-            // Note: Athena 'eegReadings' gives { electrode, samples[] }. Muse gives { electrode, index, timestamp, samples[] }
-
-            client.eegReadings.pipe(
-                // For graph, we want to unify structure.
-                // Muse: 12 samples per packet? No, usually 12 samples per packet means 256Hz / 20 = ~12.
-                // Athena: 2 samples per packet.
-
-                // We need a way to zip them into "Timeframes" where each frame has { ch0: val, ch1: val ... }
-                // zipSamples utility from muse-js helps here for Muse.
-                // Does it work for Athena?
-                // Athena main_athena.ts uses zipSamples too.
-
-                zipSamples,
-                tap(sample => {
-                    if (!filterEnabled) {
-                        // Push raw sample
-                        pushSample(sample);
-                    }
-                }),
-                notchFilter({ nbChannels, cutoffFrequency: 60 }),
-                tap(sample => {
-                    if (filterEnabled) {
-                        pushSample(sample);
-                    }
-                })
-            ).subscribe();
-
             if (client instanceof MuseAthenaClient) {
-                await client.start(preset);
+                const startPreset = view === 'graph' ? 'p1045' : preset;
+                await client.start(startPreset);
             } else {
                 await client.start();
             }
 
-        } catch (e) {
-            console.error(e);
+        } catch (e: any) {
+            console.error('Connection error:', e);
             setStatus('disconnected');
+            // If the error happens during connection, give a hint
+            if (e.message?.includes('GATT')) {
+                alert('Connection failed: Device might have disconnected. Please try again.');
+            }
         }
     };
 
-    const disconnect = async () => {
-        if (clientRef.current) {
-            clientRef.current.disconnect();
-            clientRef.current = null;
+    // --- View-Dependent Stream Management ---
+    useEffect(() => {
+        const client = clientRef.current;
+        if (status !== 'connected' || !client) {
+            subscriptionsRef.current.forEach(s => s.unsubscribe());
+            subscriptionsRef.current = [];
+            return;
         }
-        setStatus('disconnected');
-    };
+
+        // Cleanup any previous view-specific subscriptions
+        subscriptionsRef.current.forEach(s => s.unsubscribe());
+        subscriptionsRef.current = [];
+
+        if (view === 'graph') {
+            console.log('[useMuse] Switching to Graph mode - Starting EEG stream');
+            const nbChannels = mode === 'athena' ? 8 : (enableAux ? 5 : 4);
+            const samplingRate = 256;
+
+            // Sensors (Battery/Accel)
+            if (client instanceof MuseClient) {
+                subscriptionsRef.current.push(client.telemetryData.subscribe(t => {
+                    setBattery(t.batteryLevel.toFixed(2) + '%');
+                }));
+                subscriptionsRef.current.push(client.accelerometerData.subscribe(accel => {
+                    setAccelerometer({ x: accel.samples[2].x, y: accel.samples[2].y, z: accel.samples[2].z });
+                }));
+            } else if (client instanceof MuseAthenaClient) {
+                subscriptionsRef.current.push(client.batteryData.subscribe(t => {
+                    setBattery(String(t.values[0] || '?'));
+                }));
+                subscriptionsRef.current.push(client.accGyroReadings.subscribe(accel => {
+                    setAccelerometer({ x: accel.acc?.x || 0, y: accel.acc?.y || 0, z: accel.acc?.z || 0 });
+                }));
+            }
+
+            // EEG with dynamic filtering
+            subscriptionsRef.current.push(filterSettings$.current.pipe(
+                switchMap(settings => {
+                    if (!clientRef.current || !client.eegReadings) return [];
+                    let stream = client.eegReadings.pipe(zipSamples);
+                    if (settings.notchEnabled) {
+                        stream = stream.pipe(notchFilter({ nbChannels, cutoffFrequency: settings.notchFrequency }));
+                    }
+                    if (settings.bandpassEnabled) {
+                        stream = stream.pipe(bandpassFilter({
+                            nbChannels,
+                            cutoffFrequencies: [settings.bandpassLow, settings.bandpassHigh],
+                            samplingRate
+                        }));
+                    }
+                    return stream;
+                }),
+                tap(sample => pushSample(sample))
+            ).subscribe({
+                error: (err) => {
+                    console.error('EEG Stream error:', err);
+                    if (err.message?.includes('GATT')) setStatus('disconnected');
+                }
+            }));
+        } else if (view === 'logger') {
+            console.log('[useMuse] Switching to Logger mode - EEG processing stopped');
+            // PacketLogger component handles its own subscription when mounted
+            // We just ensure EEG/Sensors are NOT subscribed here (handled by the cleanup at top)
+        }
+
+        return () => {
+            subscriptionsRef.current.forEach(s => s.unsubscribe());
+            subscriptionsRef.current = [];
+        };
+    }, [status, view, mode, enableAux]);
 
     // Helper to push sample to buffer
     const pushSample = (sample: { data: number[], timestamp: number, index: number }) => {
@@ -166,39 +222,127 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, preset: AthenaPres
         dataBufferRef.current.push(reading);
     };
 
-    // Clear buffer on filter switch to avoid jumps? Maybe not needed.
+    const disconnect = async () => {
+        if (clientRef.current) {
+            clientRef.current.disconnect();
+            clientRef.current = null;
+        }
+        setStatus('disconnected');
+    };
+
+    // Clear buffer when switching connection or mode or view
     useEffect(() => {
-        // Clear buffer when switching connection or mode
         dataBufferRef.current = [];
         setData([]);
-    }, [mode, status]);
+    }, [mode, status, view]);
 
-    return { connect, disconnect, status, battery, accelerometer, deviceInfo, data, filterEnabled, setFilterEnabled, clientRef };
+    return {
+        connect,
+        disconnect,
+        status,
+        battery,
+        accelerometer,
+        data,
+        filterSettings,
+        setFilterSettings,
+        clientRef
+    };
 }
 
-// --- Components ---
+const COLORS = ['#B34D4D', '#00B3E6', '#E6B333', '#99FF99', '#FF33FF', '#3366E6', '#999966', '#FF6633', '#FFB399', '#FFFF99'];
 
-// --- Components ---
-const COLORS = ['#FF6633', '#FFB399', '#FF33FF', '#FFFF99', '#00B3E6', '#E6B333', '#3366E6', '#999966', '#99FF99', '#B34D4D'];
+// --- Filter Controls Component ---
 
-function EEGGraph({ data, visibleChannels }: { data: Reading[], visibleChannels: boolean[] }) {
-    if (data.length === 0) return <div style={{ height: 400, display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#666' }}>No Data</div>;
+function FilterControls({ settings, setSettings }: { settings: FilterSettings, setSettings: React.Dispatch<React.SetStateAction<FilterSettings>> }) {
+    const updateSetting = (key: keyof FilterSettings, value: any) => {
+        setSettings(prev => ({ ...prev, [key]: value }));
+    };
 
     return (
-        <div style={{ height: 500, width: '100%' }}>
+        <div className="glass-panel" style={{ padding: '20px', marginBottom: '20px' }}>
+            <h3 style={{ marginTop: 0, marginBottom: '16px' }}>Filter Settings</h3>
+            <div className="grid grid-cols-2" style={{ gap: '24px' }}>
+                {/* Notch Filter */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <label className="checkbox-wrapper">
+                        <input
+                            type="checkbox"
+                            checked={settings.notchEnabled}
+                            onChange={e => updateSetting('notchEnabled', e.target.checked)}
+                        />
+                        <span style={{ fontWeight: 600 }}>Notch Filter</span>
+                    </label>
+                    <div className="input-group">
+                        <label>Frequency (Hz)</label>
+                        <input
+                            type="number"
+                            value={settings.notchFrequency}
+                            onChange={e => updateSetting('notchFrequency', Number(e.target.value))}
+                            disabled={!settings.notchEnabled}
+                        />
+                    </div>
+                </div>
+
+                {/* Bandpass Filter */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <label className="checkbox-wrapper">
+                        <input
+                            type="checkbox"
+                            checked={settings.bandpassEnabled}
+                            onChange={e => updateSetting('bandpassEnabled', e.target.checked)}
+                        />
+                        <span style={{ fontWeight: 600 }}>Bandpass Filter</span>
+                    </label>
+                    <div className="grid grid-cols-2" style={{ gap: '12px' }}>
+                        <div className="input-group">
+                            <label>Low Cutoff (Hz)</label>
+                            <input
+                                type="number"
+                                value={settings.bandpassLow}
+                                onChange={e => updateSetting('bandpassLow', Number(e.target.value))}
+                                disabled={!settings.bandpassEnabled}
+                            />
+                        </div>
+                        <div className="input-group">
+                            <label>High Cutoff (Hz)</label>
+                            <input
+                                type="number"
+                                value={settings.bandpassHigh}
+                                onChange={e => updateSetting('bandpassHigh', Number(e.target.value))}
+                                disabled={!settings.bandpassEnabled}
+                            />
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function EEGGraph({ data, visibleChannels, channelNames }: { data: Reading[], visibleChannels: boolean[], channelNames: string[] }) {
+    if (data.length === 0) return (
+        <div style={{ height: 400, display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#94a3b8', background: 'rgba(0,0,0,0.2)', borderRadius: '12px' }}>
+            No Data Stream
+        </div>
+    );
+
+    return (
+        <div className="glass-panel" style={{ height: 500, width: '100%', padding: '10px' }}>
             <ResponsiveContainer>
                 <LineChart data={data}>
-                    <YAxis domain={['auto', 'auto']} />
-                    <Legend />
+                    <YAxis domain={['auto', 'auto']} stroke="#475569" fontSize={12} />
+                    <Legend verticalAlign="top" height={36} />
                     {visibleChannels.map((visible, idx) => (
                         visible && (
                             <Line
                                 key={idx}
                                 type="monotone"
                                 dataKey={`ch${idx}`}
+                                name={channelNames[idx] || `Ch ${idx + 1}`}
                                 stroke={COLORS[idx % COLORS.length]}
                                 dot={false}
-                                isAnimationActive={false} // Important for performance
+                                isAnimationActive={false}
+                                strokeWidth={1.5}
                             />
                         )
                     ))}
@@ -208,144 +352,53 @@ function EEGGraph({ data, visibleChannels }: { data: Reading[], visibleChannels:
     );
 }
 
-// --- Packet Logger Component ---
-
-import { ATHENA_PRESETS, AthenaPreset } from '../../src/muse-athena';
-
-function PacketLogger({
-    client,
-    status,
-    selectedPreset,
-    setSelectedPreset
-}: {
-    client: MuseClient | MuseAthenaClient | null,
-    status: ConnectionStatus,
-    selectedPreset: AthenaPreset,
-    setSelectedPreset: (p: AthenaPreset) => void
-}) {
-    const [packets, setPackets] = useState<{ timestamp: number, uuid: string, data: Uint8Array }[]>([]);
-    const [isLogging, setIsLogging] = useState(false);
-
-    useEffect(() => {
-        if (!client || !isLogging || !(client instanceof MuseAthenaClient)) return;
-
-        const sub = client.rawPackets.subscribe(packet => {
-            setPackets(prev => [...prev, packet]);
-        });
-
-        return () => sub.unsubscribe();
-    }, [client, isLogging]);
-
-    const downloadLogs = () => {
-        if (packets.length === 0) return;
-
-        let content = "Timestamp,UUID,HexData\n";
-        packets.forEach(p => {
-            const hex = Array.from(p.data, (b) => b.toString(16).padStart(2, '0')).join('');
-            const ts = new Date(p.timestamp).toISOString();
-            content += `${ts},${p.uuid},${hex}\n`;
-        });
-
-        const blob = new Blob([content], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `athena_logs_${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    };
-
-    const clearLogs = () => {
-        setPackets([]);
-    };
-
-    return (
-        <div style={{ padding: 20, backgroundColor: 'white', borderRadius: 8, border: '1px solid #ccc' }}>
-            <h2>Athena Packet Logger</h2>
-
-            <div style={{ marginBottom: 20 }}>
-                <label>
-                    Start Preset:
-                    <select
-                        value={selectedPreset}
-                        onChange={e => setSelectedPreset(e.target.value as AthenaPreset)}
-                        disabled={status === 'connected'}
-                        style={{ marginLeft: 8 }}
-                    >
-                        {ATHENA_PRESETS.map(p => <option key={p} value={p}>{p}</option>)}
-                    </select>
-                </label>
-                <p style={{ fontSize: 12, color: '#666' }}>
-                    Note: Change preset before connecting (or disconnect and reconnect).
-                </p>
-            </div>
-
-            <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
-                <button
-                    onClick={() => setIsLogging(!isLogging)}
-                    disabled={status !== 'connected'}
-                    style={{ backgroundColor: isLogging ? '#ffcccc' : '#ccffcc' }}
-                >
-                    {isLogging ? 'Stop Logging' : 'Start Logging'}
-                </button>
-
-                <button onClick={downloadLogs} disabled={packets.length === 0}>
-                    Download Logs ({packets.length})
-                </button>
-
-                <button onClick={clearLogs} disabled={packets.length === 0}>
-                    Clear Logs
-                </button>
-            </div>
-
-            <div>
-                <strong>Captured Packets:</strong> {packets.length}
-                {packets.length > 0 && (
-                    <div style={{ marginTop: 10, maxHeight: 300, overflowY: 'auto', backgroundColor: '#f0f0f0', padding: 10, fontFamily: 'monospace', fontSize: 12 }}>
-                        {packets.slice(-50).reverse().map((p, i) => {
-                            const hex = Array.from(p.data, (b) => b.toString(16).padStart(2, '0')).join('');
-                            return (
-                                <div key={i}>
-                                    {new Date(p.timestamp).toISOString().split('T')[1]} {p.uuid.substring(0, 8)}... {hex}
-                                </div>
-                            );
-                        })}
-                        {packets.length > 50 && <div>... (showing last 50)</div>}
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-}
 
 // --- Main App ---
 
 export default function App() {
+    // URL-based routing to ensure absolute separation
+    const urlParams = new URLSearchParams(window.location.search);
+    const initialView = urlParams.get('view') === 'logger' ? 'logger' : 'graph';
+
     const [mode, setMode] = useState<'muse' | 'athena'>('athena');
     const [enableAux, setEnableAux] = useState(false);
-
-    // View state
-    const [currentView, setCurrentView] = useState<'graph' | 'logger'>('graph');
-
-    // Athena Preset
+    const [currentView] = useState<'graph' | 'logger'>(initialView);
     const [selectedPreset, setSelectedPreset] = useState<AthenaPreset>('p1045');
-
     const [visibleChannels, setVisibleChannels] = useState<boolean[]>(new Array(8).fill(true));
 
-    // Hook instantiation
-    const { connect, disconnect, status, battery, accelerometer, deviceInfo, data, filterEnabled, setFilterEnabled, clientRef }
-        = useMuse(mode, enableAux, selectedPreset); // We need to update useMuse to return clientRef and accept preset
+    const switchView = (v: 'graph' | 'logger') => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('view', v);
+        window.location.href = url.toString(); // Full reload to ensure absolute cleanup
+    };
 
-    // Update visible channels based on mode
+    const { connect, disconnect, status, battery, accelerometer, data, filterSettings, setFilterSettings, clientRef }
+        = useMuse(mode, enableAux, currentView, selectedPreset);
+
+    // Force Athena mode if in Logger view
     useEffect(() => {
-        if (mode === 'muse') {
-            setVisibleChannels(prev => prev.map((_, i) => i < (enableAux ? 5 : 4)));
-        } else {
-            setVisibleChannels(new Array(8).fill(true));
+        if (currentView === 'logger' && mode !== 'athena') {
+            setMode('athena');
         }
-    }, [mode, enableAux]);
+    }, [currentView, mode]);
+
+    // Force p1045 if in Graph view (Athena only)
+    useEffect(() => {
+        if (currentView === 'graph' && mode === 'athena' && selectedPreset !== 'p1045') {
+            setSelectedPreset('p1045');
+        }
+    }, [currentView, mode, selectedPreset]);
+
+    const currentChannelNames = mode === 'athena' ? athenaChannelNames : museChannelNames;
+
+    useEffect(() => {
+        const count = mode === 'athena' ? 8 : (enableAux ? 5 : 4);
+        setVisibleChannels(new Array(8).fill(false).map((_, i) => {
+            if (i >= count) return false;
+            const name = currentChannelNames[i] || '';
+            return !name.includes('AUX');
+        }));
+    }, [mode, enableAux, currentChannelNames]);
 
     const toggleChannel = (idx: number) => {
         setVisibleChannels(prev => {
@@ -355,93 +408,150 @@ export default function App() {
         });
     };
 
-    const currentChannelNames = mode === 'athena' ? athenaChannelNames : museChannelNames;
-
     return (
-        <div style={{ padding: 20, fontFamily: 'sans-serif', backgroundColor: '#f5f5f5', minHeight: '100vh' }}>
-            <h1 style={{ marginBottom: 20 }}>Muse JSX Demo</h1>
+        <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '40px 20px' }}>
+            <header style={{ marginBottom: '40px', textAlign: 'center' }}>
+                <h1 style={{ fontSize: '3rem', margin: '0 0 8px 0', background: 'linear-gradient(to right, #6366f1, #22d3ee)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Muse JSX</h1>
+                <p style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>Electrophysiology for the modern web.</p>
+            </header>
 
-            {/* Top Bar Navigation */}
-            <div style={{ display: 'flex', gap: 10, marginBottom: 20, borderBottom: '1px solid #ccc', paddingBottom: 10 }}>
+            <nav className="tab-nav">
                 <button
-                    onClick={() => setCurrentView('graph')}
-                    style={{ fontWeight: currentView === 'graph' ? 'bold' : 'normal' }}
+                    className={`tab-btn ${currentView === 'graph' ? 'active' : ''}`}
+                    onClick={() => switchView('graph')}
                 >
                     EEG Graph
                 </button>
                 <button
-                    onClick={() => setCurrentView('logger')}
-                    style={{ fontWeight: currentView === 'logger' ? 'bold' : 'normal' }}
-                    disabled={mode !== 'athena'} // Only for Athena for now
+                    className={`tab-btn ${currentView === 'logger' ? 'active' : ''}`}
+                    onClick={() => switchView('logger')}
+                    disabled={mode !== 'athena'}
                 >
                     Athena Packet Logger
                 </button>
-            </div>
+            </nav>
 
-            {/* Connection Controls */}
-            <div style={{ padding: '10px 0', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 20 }}>
-                <select value={mode} onChange={e => setMode(e.target.value as any)} disabled={status === 'connected'}>
-                    <option value="athena">Athena</option>
-                    <option value="muse">Muse (Classic)</option>
-                </select>
+            <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 300px', gap: '24px' }}>
+                <main style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                    {/* Connection Panel */}
+                    <div className="glass-panel" style={{ padding: '24px' }}>
+                        <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                            <div className="input-group">
+                                <label>Device Mode</label>
+                                <select value={mode} onChange={e => setMode(e.target.value as any)} disabled={status === 'connected'}>
+                                    <option value="athena">Athena</option>
+                                    <option value="muse" disabled={currentView === 'logger'}>Muse (Classic)</option>
+                                </select>
+                            </div>
 
-                {mode === 'muse' && (
-                    <label>
-                        <input type="checkbox" checked={enableAux} onChange={e => setEnableAux(e.target.checked)} disabled={status === 'connected'} />
-                        Enable Aux
-                    </label>
-                )}
+                            {mode === 'athena' && (
+                                <div className="input-group">
+                                    <label>Start Preset</label>
+                                    <select
+                                        value={currentView === 'graph' ? 'p1045' : selectedPreset}
+                                        onChange={e => setSelectedPreset(e.target.value as AthenaPreset)}
+                                        disabled={status === 'connected' || currentView === 'graph'}
+                                    >
+                                        {currentView === 'graph' ? (
+                                            <option value="p1045">p1045</option>
+                                        ) : (
+                                            ATHENA_PRESETS.map(p => <option key={p} value={p}>{p}</option>)
+                                        )}
+                                    </select>
+                                </div>
+                            )}
 
-                <button onClick={status === 'connected' ? disconnect : connect}>
-                    {status === 'connected' ? 'Disconnect' : 'Connect'}
-                </button>
-
-                <span>Status: {status}</span>
-                <span>Battery: {battery}</span>
-                <span>{deviceInfo.name}</span>
-            </div>
-
-            {currentView === 'graph' && (
-                <>
-                    <div style={{ marginBottom: 10 }}>
-                        <strong>Device Info:</strong> {deviceInfo.name} (FW: {deviceInfo.fw}, HW: {deviceInfo.hw}) <br />
-                        <strong>Accel:</strong> x={accelerometer.x.toFixed(2)}, y={accelerometer.y.toFixed(2)}, z={accelerometer.z.toFixed(2)}
-                    </div>
-
-                    <div style={{ border: '1px solid #ccc', padding: 10, backgroundColor: 'white', borderRadius: 8 }}>
-                        <div style={{ marginBottom: 10, display: 'flex', gap: 10, alignItems: 'center' }}>
-                            <label>
-                                <input type="checkbox" checked={filterEnabled} onChange={e => setFilterEnabled(e.target.checked)} />
-                                Data Type: {filterEnabled ? 'Filtered (Notch 60Hz)' : 'Raw'}
-                            </label>
-                        </div>
-
-                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
-                            {visibleChannels.map((vis, idx) => (
-                                <label key={idx} style={{ color: COLORS[idx % COLORS.length] }}>
-                                    <input type="checkbox" checked={vis} onChange={() => toggleChannel(idx)} />
-                                    {currentChannelNames[idx] || `Ch ${idx + 1}`}
+                            {mode === 'muse' && (
+                                <label className="checkbox-wrapper" style={{ paddingBottom: '10px' }}>
+                                    <input type="checkbox" checked={enableAux} onChange={e => setEnableAux(e.target.checked)} disabled={status === 'connected'} />
+                                    <span>Enable Aux</span>
                                 </label>
-                            ))}
+                            )}
+
+                            <button
+                                className={`btn ${status === 'connected' ? 'btn-outline' : 'btn-primary'}`}
+                                onClick={status === 'connected' ? disconnect : connect}
+                                disabled={status === 'connecting'}
+                            >
+                                {status === 'connected' ? 'Disconnect' : (status === 'connecting' ? 'Connecting...' : 'Connect Device')}
+                            </button>
                         </div>
 
-                        <EEGGraph data={data} visibleChannels={visibleChannels} />
+                        <div style={{ marginTop: '20px', display: 'flex', gap: '24px', fontSize: '0.9rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ color: 'var(--text-muted)' }}>Status:</span>
+                                <span className={`badge ${status === 'connected' ? 'badge-success' : 'badge-danger'}`}>
+                                    {status.toUpperCase()}
+                                </span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ color: 'var(--text-muted)' }}>Battery:</span>
+                                <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{battery}</span>
+                            </div>
+                        </div>
                     </div>
-                </>
-            )}
 
-            {currentView === 'logger' && mode === 'athena' && (
-                <PacketLogger
-                    client={clientRef.current}
-                    status={status}
-                    selectedPreset={selectedPreset}
-                    setSelectedPreset={setSelectedPreset}
-                />
-            )}
+                    {currentView === 'graph' && (
+                        <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                            <FilterControls settings={filterSettings} setSettings={setFilterSettings} />
 
-            {currentView === 'logger' && mode !== 'athena' && (
-                <div>Packet Logger is only available for Athena / Muse S (Gen 3) devices.</div>
-            )}
-        </div>
+                            <div className="glass-panel" style={{ padding: '24px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                    <h3 style={{ margin: 0 }}>EEG Channels</h3>
+                                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                        {visibleChannels.map((vis, idx) => (
+                                            <label
+                                                key={idx}
+                                                className="checkbox-wrapper"
+                                                style={{ fontSize: '0.85rem', color: COLORS[idx % COLORS.length], border: `1px solid ${vis ? COLORS[idx % COLORS.length] : 'var(--panel-border)'}`, padding: '4px 8px', borderRadius: '6px', background: vis ? 'rgba(255,255,255,0.05)' : 'transparent' }}
+                                            >
+                                                <input type="checkbox" checked={vis} onChange={() => toggleChannel(idx)} />
+                                                {currentChannelNames[idx] || `Ch ${idx + 1}`}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                                <EEGGraph data={data} visibleChannels={visibleChannels} channelNames={currentChannelNames} />
+                            </div>
+                        </div>
+                    )}
+
+                    {currentView === 'logger' && mode === 'athena' && (
+                        <AthenaLogger
+                            clientRef={clientRef}
+                            status={status}
+                        />
+                    )}
+
+                    {currentView === 'logger' && mode !== 'athena' && (
+                        <div className="glass-panel" style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                            Packet Logger is only available for Athena / Muse S (Gen 3) devices.
+                        </div>
+                    )}
+                </main>
+
+                {currentView === 'graph' && (
+                    <aside style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                        <div className="glass-panel" style={{ padding: '20px' }}>
+                            <h3 style={{ marginTop: 0, fontSize: '1rem', borderBottom: '1px solid var(--panel-border)', paddingBottom: '10px' }}>Sensors</h3>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
+                                <div>
+                                    <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Accelerometer</label>
+                                    <div className="grid grid-cols-2" style={{ marginTop: '8px', fontSize: '0.9rem' }}>
+                                        <div><span style={{ color: 'var(--text-muted)' }}>X:</span> {accelerometer.x.toFixed(2)}</div>
+                                        <div><span style={{ color: 'var(--text-muted)' }}>Y:</span> {accelerometer.y.toFixed(2)}</div>
+                                        <div><span style={{ color: 'var(--text-muted)' }}>Z:</span> {accelerometer.z.toFixed(2)}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="glass-panel" style={{ padding: '20px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                            <p style={{ margin: 0 }}>Tip: Real-time filtering uses RxJS pipes for low-latency signal processing.</p>
+                        </div>
+                    </aside>
+                )}
+            </div >
+        </div >
     );
 }

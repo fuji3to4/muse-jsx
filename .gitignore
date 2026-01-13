@@ -6,4 +6,5 @@ dist-demo
 *.log
 .DS_Store
 coverage
+docs
 
