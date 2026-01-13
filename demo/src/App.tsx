@@ -55,14 +55,10 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
         let lastUpdateTime = 0;
 
         const updateLoop = (timestamp: number) => {
-            // Bypass graph processing completely if not in graph view
             if (view !== 'graph') return;
 
-            if (timestamp - lastUpdateTime > 100) { // Update every 100ms (10fps) is enough for EEG
+            if (timestamp - lastUpdateTime > 100) { // 20fps is much safer for Recharts/SVG rendering
                 if (dataBufferRef.current.length > 0) {
-                    if (dataBufferRef.current.length > 250) {
-                        dataBufferRef.current = dataBufferRef.current.slice(dataBufferRef.current.length - 250);
-                    }
                     setData([...dataBufferRef.current]);
                 }
                 lastUpdateTime = timestamp;
@@ -72,7 +68,7 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
         animationFrameId = requestAnimationFrame(updateLoop);
 
         return () => cancelAnimationFrame(animationFrameId);
-    }, []);
+    }, [view]);
 
     const connect = async () => {
         if (status === 'connected' || status === 'connecting') return;
@@ -106,16 +102,16 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
                 // and sequential GATT operations to avoid conflicts
                 await new Promise(resolve => setTimeout(resolve, 500));
                 try {
-                    const info = await client.deviceInfo();
+                    const info = await (client as any).deviceInfo();
                     console.log('[useMuse] Classic Device Connected:', info);
                 } catch (err) {
                     console.warn('Could not retrieve classic device info', err);
                 }
             } else {
                 // Athena: Non-blocking as requested
-                client.deviceInfo().then(info => {
+                (client as any).deviceInfo().then((info: any) => {
                     console.log('[useMuse] Athena Device Connected:', info);
-                }).catch(err => {
+                }).catch((err: any) => {
                     console.warn('Could not retrieve Athena device info', err);
                 });
             }
@@ -176,7 +172,13 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
             subscriptionsRef.current.push(filterSettings$.current.pipe(
                 switchMap(settings => {
                     if (!clientRef.current || !client.eegReadings) return [];
-                    let stream = client.eegReadings.pipe(zipSamples);
+                    let stream = client.eegReadings.pipe(
+                        //For debug all eeg logs
+                        // tap(r => {
+                        //     console.log(`[RAW EEG] ${mode.toUpperCase()} ch=${r.electrode} i=${r.index} t=${r.timestamp.toFixed(1)} sl=${r.samples.length} samples=[${r.samples[0].toFixed(1)}, ...]`);
+                        // }),
+                        zipSamples
+                    );
                     if (settings.notchEnabled) {
                         stream = stream.pipe(notchFilter({ nbChannels, cutoffFrequency: settings.notchFrequency }));
                     }
@@ -191,9 +193,15 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
                 }),
                 tap(sample => pushSample(sample))
             ).subscribe({
+                next: () => {
+                    // Logging every sample is too much, but you can add a counter here if needed
+                },
                 error: (err) => {
-                    console.error('EEG Stream error:', err);
+                    console.error('[App] EEG Stream error:', err);
                     if (err.message?.includes('GATT')) setStatus('disconnected');
+                },
+                complete: () => {
+                    console.warn('[App] EEG Stream completed (unexpectedly)');
                 }
             }));
         } else if (view === 'logger') {
@@ -210,7 +218,6 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
 
     // Helper to push sample to buffer
     const pushSample = (sample: { data: number[], timestamp: number, index: number }) => {
-        // sample.data is array of values [ch0, ch1, ...]
         const reading: Reading = {
             index: sample.index,
             timestamp: sample.timestamp,
@@ -220,6 +227,10 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
         });
 
         dataBufferRef.current.push(reading);
+        // Keep buffer lean at all times, even if we are not rendering
+        if (dataBufferRef.current.length > 250) {
+            dataBufferRef.current.shift();
+        }
     };
 
     const disconnect = async () => {

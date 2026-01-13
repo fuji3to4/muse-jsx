@@ -12,14 +12,13 @@ import type {
     AthenaOpticalReading,
     AthenaBatteryData,
     EventMarker,
-    XYZ,
     MuseControlResponse,
     MuseDeviceInfo,
     RawAthenaPacket,
 } from './lib/muse-interfaces';
 import { parseControl } from './lib/muse-parse';
 import { decodeResponse, observableCharacteristic } from './lib/muse-utils';
-import { parsePacket, type AthenaEntry } from './lib/athena-parser';
+import { parsePacket } from './lib/athena-parser';
 
 export const MUSE_SERVICE = 0xfe8d;
 
@@ -30,64 +29,46 @@ const ATHENA_SENSOR_CHAR_UUIDS = [
     '273e0003-4c4d-454d-96be-f03bac821358', // EEG TP9 (fallback)
 ];
 
-// These names match the characteristics defined in PPG_CHARACTERISTICS above
 export const opticalChannelNames = ['ambient', 'infrared', 'red'];
-
-// These names match the characteristics defined in EEG_CHARACTERISTICS above
 export const channelNames = ['TP9', 'AF7', 'AF8', 'TP10', 'FPz', 'AUX_R', 'AUX_L', 'AUX'];
 
-// Athena commands (matching Python implementation)
 export const ATHENA_COMMANDS = {
-    v4: new Uint8Array([0x03, 0x76, 0x34, 0x0a]), // Version
-    v6: new Uint8Array([0x03, 0x76, 0x36, 0x0a]), // Version
-    s: new Uint8Array([0x02, 0x73, 0x0a]), // Status
-    h: new Uint8Array([0x02, 0x68, 0x0a]), // Halt
-    //Presets
-    p21: new Uint8Array([0x04, 0x70, 0x32, 0x31, 0x0a]), // Basic preset
-    p1034: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x33, 0x34, 0x0a]), // Sleep preset
-    p1035: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x33, 0x35, 0x0a]), // Sleep preset 2
-    p1045: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x34, 0x35, 0x0a]), // Alternate preset seen in logs
-    // Streaming commands
-    d: new Uint8Array([0x02, 0x64, 0x0a]), // Start data(short command)
-    dc001: new Uint8Array([0x06, 0x64, 0x63, 0x30, 0x30, 0x31, 0x0a]), // Start streaming
-    L1: new Uint8Array([0x03, 0x4c, 0x31, 0x0a]), // L1 command
+    v4: new Uint8Array([0x03, 0x76, 0x34, 0x0a]),
+    v6: new Uint8Array([0x03, 0x76, 0x36, 0x0a]),
+    s: new Uint8Array([0x02, 0x73, 0x0a]),
+    h: new Uint8Array([0x02, 0x68, 0x0a]),
+    p21: new Uint8Array([0x04, 0x70, 0x32, 0x31, 0x0a]),
+    p1034: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x33, 0x34, 0x0a]),
+    p1035: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x33, 0x35, 0x0a]),
+    p1045: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x34, 0x35, 0x0a]),
+    d: new Uint8Array([0x02, 0x64, 0x0a]),
+    dc001: new Uint8Array([0x06, 0x64, 0x63, 0x30, 0x30, 0x31, 0x0a]),
+    L1: new Uint8Array([0x03, 0x4c, 0x31, 0x0a]),
 };
 
 export type AthenaPreset = 'p21' | 'p1034' | 'p1035' | 'p1045';
 export const ATHENA_PRESETS: AthenaPreset[] = ['p21', 'p1034', 'p1035', 'p1045'];
 
-/**
- * MuseAthennaClient - Bluetooth client for Athena-based Muse headsets
- *
- * Athena uses a tag-based packet protocol:
- * - 0x12: EEG data (8 channels, 2 samples, 256 Hz)
- * - 0x47: ACC/GYRO data (3 samples, 52 Hz)
- * - 0x34: Optical data (3 samples, 64 Hz)
- * - 0x88: Battery data (10 values, 1 Hz) [firmware update: was 0x98]
- */
 export class MuseAthenaClient {
     deviceName: string | null = '';
     connectionStatus = new BehaviorSubject<boolean>(false);
 
-    // Athena streaming observables (compatible with muse.ts)
     rawControlData!: Observable<string>;
     controlResponses!: Observable<MuseControlResponse>;
-    eegReadings!: Observable<EEGReading>; // EEG with channel info
-    accGyroReadings!: Observable<AthenaAccGyroSample>; // IMU samples
-    opticalReadings!: Observable<AthenaOpticalReading>; // Optical/PPG with channel
+    eegReadings!: Observable<EEGReading>;
+    accGyroReadings!: Observable<AthenaAccGyroSample>;
+    opticalReadings!: Observable<AthenaOpticalReading>;
     batteryData!: Observable<AthenaBatteryData>;
-
-    // Raw packet stream for logging/debugging
     rawPackets!: Observable<RawAthenaPacket>;
-    private commandLock: Promise<void> = Promise.resolve();
 
+    private commandLock: Promise<void> = Promise.resolve();
     eventMarkers: Subject<EventMarker> = new Subject();
 
     private gatt: BluetoothRemoteGATTServer | null = null;
     private controlChar!: BluetoothRemoteGATTCharacteristic;
     private athenaSensorChar!: BluetoothRemoteGATTCharacteristic;
 
-    // Timestamp tracking (like muse.ts)
+    // Timestamp tracking state
     private lastEegIndex: number | null = null;
     private lastEegTimestamp: number | null = null;
     private lastAccGyroIndex: number | null = null;
@@ -95,37 +76,7 @@ export class MuseAthenaClient {
     private lastOpticalIndex: number | null = null;
     private lastOpticalTimestamp: number | null = null;
 
-    // Locate a specific tag inside a packet at the expected offset, accounting for fixed header.
-    private findTaggedPacket(packet: Uint8Array, tag: number): [number, AthenaEntry[]] | null {
-        // Expected tag position: byte 9 (after len, counter, 7 unknown bytes)
-        const tagOffset = 9;
-
-        if (packet.length <= tagOffset) {
-            return null;
-        }
-
-        const actualTag = packet[tagOffset];
-        if (actualTag !== tag) {
-            // Tag not found at expected location
-            return null;
-        }
-
-        try {
-            // parsePacket expects tagIndex pointing to the tag byte
-            const [, typeName, entries] = parsePacket(packet, tag, tagOffset, false);
-            if (typeName.startsWith('UNKNOWN')) {
-                return null;
-            }
-            return [tagOffset, entries];
-        } catch (err) {
-            console.error(`[Athena] Failed to parse tag 0x${tag.toString(16)} at offset ${tagOffset}:`, err);
-            return null;
-        }
-    }
-
     async connect(gatt?: BluetoothRemoteGATTServer) {
-        // Web Bluetooth must run in a secure context (https or localhost)
-        // In test (Node) environment, isSecureContext is undefined – only enforce when available.
         if (typeof isSecureContext !== 'undefined' && !isSecureContext) {
             throw new Error('Web Bluetooth requires a secure context (https or localhost).');
         }
@@ -133,28 +84,19 @@ export class MuseAthenaClient {
         if (gatt) {
             this.gatt = gatt;
         } else {
-            // Prefer previously authorized devices to avoid showing the chooser when possible
             let device: BluetoothDevice | null = null;
-            const bt = (
-                navigator as Navigator & { bluetooth?: Bluetooth & { getDevices?: () => Promise<BluetoothDevice[]> } }
-            ).bluetooth;
-            if (bt && typeof bt.getDevices === 'function') {
+            const bt = (navigator as Navigator & { bluetooth?: Bluetooth }).bluetooth;
+            if (bt && typeof (bt as any).getDevices === 'function') {
                 try {
-                    const devices: BluetoothDevice[] = await bt.getDevices();
+                    const devices: BluetoothDevice[] = await (bt as any).getDevices();
                     device = devices.find((d) => d.name?.startsWith('Muse')) || null;
                 } catch {
                     // Ignore and fallback to requestDevice
                 }
             }
-
             if (!device) {
                 device = await navigator.bluetooth.requestDevice({
-                    filters: [
-                        {
-                            services: [MUSE_SERVICE],
-                            namePrefix: 'Muse',
-                        },
-                    ],
+                    filters: [{ services: [MUSE_SERVICE], namePrefix: 'Muse' }],
                     optionalServices: [MUSE_SERVICE],
                 });
             }
@@ -162,7 +104,6 @@ export class MuseAthenaClient {
         }
 
         this.deviceName = this.gatt.device.name || null;
-
         const service = await this.gatt.getPrimaryService(MUSE_SERVICE);
         fromEvent(this.gatt.device, 'gattserverdisconnected')
             .pipe(first())
@@ -171,55 +112,42 @@ export class MuseAthenaClient {
                 this.connectionStatus.next(false);
             });
 
-        // Control characteristic (for commands and device info)
         this.controlChar = await service.getCharacteristic(ATHENA_CONTROL_CHAR_UUID);
         const controlObservable = (await observableCharacteristic(this.controlChar)).pipe(
-            map((data) => ({
-                uuid: this.controlChar.uuid,
-                data: new Uint8Array(data.buffer),
-            })),
+            map((data) => ({ uuid: this.controlChar.uuid, data: new Uint8Array(data.buffer) })),
             share(),
         );
 
         this.rawControlData = controlObservable.pipe(
             map((p) => {
-                // Athena fallback: if it doesn't look like a classic length-prefixed packet, decode fully
-                if (p.data[0] > p.data.length) {
-                    return new TextDecoder().decode(p.data);
+                try {
+                    if (p.data[0] > p.data.length) return new TextDecoder().decode(p.data);
+                    return decodeResponse(p.data);
+                } catch {
+                    return '';
                 }
-                return decodeResponse(p.data);
             }),
             share(),
         );
         this.controlResponses = parseControl(this.rawControlData);
 
-        // Sensor characteristic (for data - prefer UNIVERSAL first)
         let sensorChar: BluetoothRemoteGATTCharacteristic | null = null;
         for (const charUuid of ATHENA_SENSOR_CHAR_UUIDS) {
             try {
                 sensorChar = await service.getCharacteristic(charUuid);
-                console.log(`[Athena] Using sensor characteristic: ${charUuid}`);
                 break;
             } catch {
-                console.log(`[Athena] Sensor characteristic not found: ${charUuid}`);
+                // Try next UUID
             }
         }
-
-        if (!sensorChar) {
-            throw new Error('Could not find Athena sensor characteristic');
-        }
-
+        if (!sensorChar) throw new Error('Could not find Athena sensor characteristic');
         this.athenaSensorChar = sensorChar;
 
         const sensorObservable = (await observableCharacteristic(this.athenaSensorChar)).pipe(
-            map((data) => ({
-                uuid: this.athenaSensorChar.uuid,
-                data: new Uint8Array(data.buffer),
-            })),
+            map((data) => ({ uuid: this.athenaSensorChar.uuid, data: new Uint8Array(data.buffer) })),
             share(),
         );
 
-        // Combined raw packets for the logger
         this.rawPackets = merge(controlObservable, sensorObservable).pipe(
             map((p) => ({ ...p, timestamp: Date.now() })),
             share(),
@@ -230,27 +158,23 @@ export class MuseAthenaClient {
             share(),
         );
 
-        // Athena EEG readings (tag 0x12) - 8 channels x 2 samples each
         this.eegReadings = rawSensorPackets$.pipe(
-            mergeMap((packet) => this.parseAthenaEegPacket(packet)),
+            mergeMap((packet) => this.parseAthenaPacketForTag<EEGReading>(packet, 0x12)),
             share(),
         );
 
-        // Athena ACC/GYRO readings (tag 0x47) - 3 samples each
         this.accGyroReadings = rawSensorPackets$.pipe(
-            mergeMap((packet) => this.parseAthenaAccGyroPacket(packet)),
+            mergeMap((packet) => this.parseAthenaPacketForTag<AthenaAccGyroSample>(packet, 0x47)),
             share(),
         );
 
-        // Athena Optical readings (tag 0x34) - 3 samples each
         this.opticalReadings = rawSensorPackets$.pipe(
-            mergeMap((packet) => this.parseAthenaOpticalPacket(packet)),
+            mergeMap((packet) => this.parseAthenaPacketForTag<AthenaOpticalReading>(packet, 0x34)),
             share(),
         );
 
-        // Athena Battery data (tag 0x88)
         this.batteryData = rawSensorPackets$.pipe(
-            map((packet) => this.parseAthenaBatteryPacket(packet)),
+            map((packet) => this.parseAthenaBatterySync(packet)),
             filter((data) => data !== null),
             map((data) => data as AthenaBatteryData),
             share(),
@@ -259,221 +183,156 @@ export class MuseAthenaClient {
         this.connectionStatus.next(true);
     }
 
-    private parseAthenaEegPacket(packet: Uint8Array): Observable<EEGReading> {
-        return new Observable((observer) => {
-            if (packet.length < 1) {
+    private parseAthenaPacketForTag<T>(packet: Uint8Array, targetTag: number): Observable<T> {
+        return new Observable<T>((observer) => {
+            if (packet.length < 10) {
                 observer.complete();
                 return;
             }
-
-            const found = this.findTaggedPacket(packet, 0x12);
-            if (!found) {
-                observer.complete();
-                return;
-            }
-
-            const [, entries] = found;
-
-            // Collect all EEG samples from entries
-            let allSamples: number[] = [];
-            for (const entry of entries) {
-                if (entry.type === 'EEG') {
-                    allSamples = allSamples.concat(entry.data);
-                }
-            }
-
             const eventIndex = packet[1];
+            let idx = 9;
 
-            for (let ch = 0; ch < 8 && ch * 2 < allSamples.length; ch++) {
-                const samples = allSamples.slice(ch * 2, ch * 2 + 2);
-                if (samples.length === 2) {
-                    const timestamp = this.getAthenaTimestamp(eventIndex, 2, 256, 'eeg');
-                    observer.next({
-                        index: eventIndex,
-                        electrode: ch,
-                        timestamp,
-                        samples,
-                    });
+            while (idx < packet.length) {
+                const tag = packet[idx];
+                try {
+                    const [nextIdx, , entries] = parsePacket(packet, tag, idx, false);
+                    if (tag === targetTag) {
+                        if (tag === 0x12) {
+                            // !!! CRITICAL: Get timestamp ONCE per tag to keep channels synchronized
+                            const timestamp = this.getAthenaTimestamp(eventIndex, 2, 256, 'eeg');
+                            for (const entry of entries) {
+                                const allSamples = entry.data;
+                                for (let ch = 0; ch < 8 && ch * 2 < allSamples.length; ch++) {
+                                    const samplesArr = allSamples.slice(ch * 2, ch * 2 + 2);
+                                    if (samplesArr.length === 2) {
+                                        observer.next({
+                                            index: eventIndex,
+                                            electrode: ch,
+                                            timestamp: timestamp, // Shared across channels
+                                            samples: samplesArr,
+                                        } as unknown as T);
+                                    }
+                                }
+                            }
+                        } else if (tag === 0x47) {
+                            for (let i = 0; i < 3; i++) {
+                                const timestamp = this.getAthenaTimestamp(eventIndex, 1, 52, 'accgyro');
+                                const accEntry = entries[i * 2];
+                                const gyroEntry = entries[i * 2 + 1];
+                                if (accEntry && accEntry.type === 'ACC') {
+                                    observer.next({
+                                        index: eventIndex,
+                                        timestamp,
+                                        acc: { x: accEntry.data[0], y: accEntry.data[1], z: accEntry.data[2] },
+                                        gyro: {
+                                            x: gyroEntry?.data[0] || 0,
+                                            y: gyroEntry?.data[1] || 0,
+                                            z: gyroEntry?.data[2] || 0,
+                                        },
+                                    } as unknown as T);
+                                }
+                            }
+                        } else if (tag === 0x34) {
+                            for (let i = 0; i < 3; i++) {
+                                const timestamp = this.getAthenaTimestamp(eventIndex, 1, 64, 'optical');
+                                const optEntry = entries[i];
+                                if (optEntry && optEntry.type === 'OPTICAL') {
+                                    observer.next({
+                                        index: eventIndex,
+                                        opticalChannel: i % 3,
+                                        timestamp,
+                                        samples: optEntry.data,
+                                    } as unknown as T);
+                                }
+                            }
+                        }
+                    } else if (tag === 0x12 || tag === 0x47 || tag === 0x34) {
+                        // Mark time for other streaming tags even if they aren't our target
+                        this.getAthenaTimestamp(
+                            eventIndex,
+                            1,
+                            256,
+                            tag === 0x12 ? 'eeg' : tag === 0x47 ? 'accgyro' : 'optical',
+                        );
+                    }
+
+                    if (nextIdx <= idx) {
+                        idx += 1;
+                    } else {
+                        idx = nextIdx;
+                    }
+                } catch {
+                    idx += 1;
                 }
             }
-
             observer.complete();
         });
     }
 
-    private parseAthenaAccGyroPacket(packet: Uint8Array): Observable<AthenaAccGyroSample> {
-        return new Observable((observer) => {
-            if (packet.length < 1) {
-                observer.complete();
-                return;
-            }
-
-            const found = this.findTaggedPacket(packet, 0x47);
-            if (!found) {
-                observer.complete();
-                return;
-            }
-
-            const [, entries] = found;
-            const eventIndex = packet[1];
-            let sampleCount = 0;
-
-            // Parse ACC and GYRO entries
-            for (let i = 0; i < entries.length; i++) {
-                if (entries[i].type === 'ACC') {
-                    const acc = entries[i].data;
-                    const gyro =
-                        i + 1 < entries.length && entries[i + 1].type === 'GYRO' ? entries[i + 1].data : [0, 0, 0];
-
-                    const timestamp = this.getAthenaTimestamp(eventIndex + sampleCount, 1, 52, 'accgyro');
-
-                    observer.next({
-                        index: eventIndex + sampleCount,
-                        timestamp,
-                        acc: { x: acc[0], y: acc[1], z: acc[2] },
-                        gyro: { x: gyro[0], y: gyro[1], z: gyro[2] },
-                    });
-
-                    sampleCount++;
-                    i++; // Skip the GYRO entry we just processed
+    private parseAthenaBatterySync(packet: Uint8Array): AthenaBatteryData | null {
+        if (packet.length < 10) return null;
+        let idx = 9;
+        while (idx < packet.length) {
+            const tag = packet[idx];
+            try {
+                const [nextIdx, , entries] = parsePacket(packet, tag, idx, false);
+                if (tag === 0x88) {
+                    return { timestamp: Date.now(), values: entries[0].data };
                 }
-            }
-
-            observer.complete();
-        });
-    }
-
-    private parseAthenaOpticalPacket(packet: Uint8Array): Observable<AthenaOpticalReading> {
-        return new Observable((observer) => {
-            if (packet.length < 1) {
-                observer.complete();
-                return;
-            }
-
-            const found = this.findTaggedPacket(packet, 0x34);
-            if (!found) {
-                observer.complete();
-                return;
-            }
-
-            const [, entries] = found;
-            const eventIndex = packet[1];
-
-            // Each OPTICAL entry is one sample with 4 values
-            for (let i = 0; i < entries.length; i++) {
-                if (entries[i].type === 'OPTICAL') {
-                    const samples = entries[i].data;
-                    const timestamp = this.getAthenaTimestamp(eventIndex + i, 1, 64, 'optical');
-
-                    observer.next({
-                        index: eventIndex + i,
-                        opticalChannel: i % 3, // Cycle through 3 channels
-                        timestamp,
-                        samples,
-                    });
+                if (nextIdx <= idx) {
+                    idx += 1;
+                } else {
+                    idx = nextIdx;
                 }
-            }
-
-            observer.complete();
-        });
-    }
-
-    private parseAthenaBatteryPacket(packet: Uint8Array): AthenaBatteryData | null {
-        if (packet.length < 1) return null;
-        const found = this.findTaggedPacket(packet, 0x88);
-        if (!found) return null;
-
-        const [, entries] = found;
-
-        let values: number[] = [];
-        for (const entry of entries) {
-            if (entry.type === 'BATTERY') {
-                values = values.concat(entry.data);
+            } catch {
+                idx += 1;
             }
         }
-
-        // log all battery values
-        console.log(`[Athena] Battery packet: ${values}`);
-
-        return {
-            timestamp: new Date().getTime(),
-            values,
-        };
+        return null;
     }
 
     async sendCommand(cmd: string) {
         const cmdBytes = ATHENA_COMMANDS[cmd as keyof typeof ATHENA_COMMANDS];
-        if (!cmdBytes) {
-            throw new Error(`Unknown Athena command: ${cmd}`);
-        }
-
+        if (!cmdBytes) throw new Error(`Unknown Athena command: ${cmd}`);
         this.commandLock = this.commandLock.then(async () => {
             console.log(`[Athena] Sending command: ${cmd}`);
             await this.controlChar.writeValueWithoutResponse(cmdBytes);
             await this.delay(50);
         });
-
         return this.commandLock;
     }
 
     async start(preset: string = 'p1045') {
-        // NOTE: observableCharacteristic already called startNotifications in connect()
-        console.log('[Athena] Starting initialization sequence');
-
-        // Athena startup sequence
-        // 1. Get device info (v4)
-        console.log('[Athena] Sending version check ...');
+        console.log('[Athena] Starting sequence');
         await this.sendCommand('v4');
         await this.delay(100);
-
-        // 2. Status check
-        console.log('[Athena] Sending status check ...');
         await this.sendCommand('s');
         await this.delay(100);
-
-        // 3. Halt any existing streams
-        console.log('[Athena] Sending halt (h)...');
         await this.sendCommand('h');
         await this.delay(100);
-
-        // 4. Set preset
-        console.log(`[Athena] Setting preset (${preset})...`);
         await this.sendCommand(preset);
         await this.delay(100);
-
-        // 5. Start streaming (SEND TWICE!)
-        console.log('[Athena] Starting stream (dc001 x2)...');
         await this.sendCommand('dc001');
         await this.delay(50);
         await this.sendCommand('dc001');
         await this.delay(100);
-
-        // 6. Send L1 command
-        console.log('[Athena] Sending L1 command...');
         await this.sendCommand('L1');
         await this.delay(100);
-
-        // 7. Wait for streaming to start
-        console.log('[Athena] Waiting for stream to start...');
         await this.delay(2000);
-
-        console.log('[Athena] Stream initialization complete!');
+        console.log('[Athena] Stream complete!');
     }
 
     async stop() {
         try {
             await this.sendCommand('h');
-        } catch (e) {
-            console.error('Error stopping stream:', e);
+        } catch {
+            // Already stopped or disconnected
         }
     }
-
     async pause() {
         await this.sendCommand('h');
     }
-
     async resume() {
-        console.log('[Athena] Resuming stream (dc001)...');
         await this.sendCommand('dc001');
     }
 
@@ -492,15 +351,13 @@ export class MuseAthenaClient {
 
     disconnect() {
         if (this.gatt) {
-            // Reset tracking and counters
             this.lastEegIndex = null;
             this.lastEegTimestamp = null;
             this.lastAccGyroIndex = null;
             this.lastAccGyroTimestamp = null;
             this.lastOpticalIndex = null;
             this.lastOpticalTimestamp = null;
-
-            this.gatt.disconnect();
+            if (this.gatt.connected) this.gatt.disconnect();
             this.connectionStatus.next(false);
         }
     }
@@ -513,11 +370,9 @@ export class MuseAthenaClient {
         eventIndex: number,
         samplesPerReading: number,
         frequency: number,
-        dataType: 'eeg' | 'accgyro' | 'optical',
+        dataType: string,
     ): number {
         const READING_DELTA = 1000 * (1.0 / frequency) * samplesPerReading;
-
-        // Use appropriate last index/timestamp for each type
         let lastIndex =
             dataType === 'eeg'
                 ? this.lastEegIndex
@@ -531,33 +386,27 @@ export class MuseAthenaClient {
                   ? this.lastAccGyroTimestamp
                   : this.lastOpticalTimestamp;
 
-        if (lastIndex === null || lastTimestamp === null) {
-            lastIndex = eventIndex;
-            lastTimestamp = new Date().getTime() - READING_DELTA;
+        const now = Date.now();
+        if (lastIndex === null || lastTimestamp === null || now - lastTimestamp > 500) {
+            // Recalibrate or initial
+            lastTimestamp = now - READING_DELTA;
+        } else {
+            // !!! FIX: Just increment by nominal delta to maintain exact 256Hz speed
+            // Global eventIndex gaps in Athena represent other packets (IMU/etc), not time.
+            lastTimestamp = lastTimestamp + READING_DELTA;
         }
 
-        // Handle wrap around (8-bit counter 0-255)
-        while (lastIndex - eventIndex > 128) {
-            eventIndex += 256;
-        }
-
-        let newTimestamp = lastTimestamp;
-        if (eventIndex > lastIndex) {
-            newTimestamp += READING_DELTA * (eventIndex - lastIndex);
-        }
-
-        // Update tracking for this type
         if (dataType === 'eeg') {
             this.lastEegIndex = eventIndex;
-            this.lastEegTimestamp = newTimestamp;
+            this.lastEegTimestamp = lastTimestamp;
         } else if (dataType === 'accgyro') {
             this.lastAccGyroIndex = eventIndex;
-            this.lastAccGyroTimestamp = newTimestamp;
+            this.lastAccGyroTimestamp = lastTimestamp;
         } else {
             this.lastOpticalIndex = eventIndex;
-            this.lastOpticalTimestamp = newTimestamp;
+            this.lastOpticalTimestamp = lastTimestamp;
         }
 
-        return newTimestamp;
+        return lastTimestamp;
     }
 }
