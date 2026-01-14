@@ -1,6 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { MuseClient } from '../../src/muse';
 import { MuseAthenaClient } from '../../src/muse-athena';
+import { bufferTime } from 'rxjs';
+import {
+    savePacketSessionMetadata,
+    addPacketDataPoints,
+    getPacketSessions,
+    deletePacketSession,
+    getPacketDataForSession,
+    PacketSessionMetadata,
+    PacketDataPoint
+} from './db';
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 
@@ -10,69 +20,89 @@ interface PacketLoggerProps {
 }
 
 export function AthenaLogger({ clientRef, status }: PacketLoggerProps) {
-    const [packets, setPackets] = useState<{ timestamp: string, uuid: string, hex: string }[]>([]);
-    const [isLogging, setIsLogging] = useState(true);
-    const packetsRef = useRef<{ timestamp: number, uuid: string, data: Uint8Array }[]>([]);
+    const [isLogging, setIsLogging] = useState(false);
+    const [sessions, setSessions] = useState<PacketSessionMetadata[]>([]);
     const [capturedCount, setCapturedCount] = useState(0);
+    const [recentPackets, setRecentPackets] = useState<{ timestamp: string, uuid: string, hex: string }[]>([]);
+
+    const sessionIdRef = useRef<string | null>(null);
+    const currentPacketsRef = useRef<{ timestamp: number, uuid: string, data: Uint8Array }[]>([]);
+
+    useEffect(() => {
+        loadSessions();
+    }, []);
+
+    const loadSessions = async () => {
+        const list = await getPacketSessions();
+        setSessions(list.sort((a, b) => b.startTime - a.startTime));
+    };
 
     useEffect(() => {
         const client = clientRef.current;
         if (!client || !isLogging || !(client instanceof MuseAthenaClient) || !client.rawPackets) {
-            console.log('[AthenaLogger] Waiting for client or rawPackets...');
             return;
         }
 
-        console.log('[AthenaLogger] Starting packet subscription');
-        const sub = client.rawPackets.subscribe({
-            next: (packet) => {
-                packetsRef.current.push(packet);
-                if (packetsRef.current.length > 50000) { // Limit buffer size to 50k for safety
-                    packetsRef.current.shift();
-                }
-            },
-            error: (err) => console.error('[AthenaLogger] Subscription error:', err)
+        const id = `athena-pkg-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+        sessionIdRef.current = id;
+
+        savePacketSessionMetadata({
+            id,
+            startTime: Date.now(),
+            mode: 'athena'
         });
 
-        // Throttle UI update to 2Hz (every 500ms) to avoid React overload
-        const interval = setInterval(() => {
-            try {
-                const count = packetsRef.current.length;
-                setCapturedCount(count);
+        const sub = client.rawPackets.pipe(
+            bufferTime(1000)
+        ).subscribe(async (buffer) => {
+            if (buffer.length === 0 || !sessionIdRef.current) return;
 
-                // Show last 200 packets in UI for better context
-                const last200 = packetsRef.current.slice(-200).map(p => {
-                    const hex = p.data ? Array.from(p.data, (b) => b.toString(16).padStart(2, '0')).join('') : 'no-data';
-                    return {
-                        timestamp: new Date(p.timestamp).toISOString().split('T')[1],
-                        uuid: p.uuid ? p.uuid.substring(0, 8) : 'unknown',
-                        hex
-                    };
-                });
-                setPackets(last200);
-            } catch (err) {
-                console.error('[AthenaLogger] UI update error:', err);
-            }
-        }, 500);
+            const dataPoints: PacketDataPoint[] = buffer.map(p => ({
+                sessionId: sessionIdRef.current!,
+                timestamp: p.timestamp,
+                uuid: p.uuid,
+                data: p.data
+            }));
+
+            await addPacketDataPoints(dataPoints);
+            setCapturedCount(prev => prev + dataPoints.length);
+
+            // Update internal buffer for UI display (last 50)
+            currentPacketsRef.current = [...currentPacketsRef.current, ...buffer].slice(-50);
+
+            const displayPackets = currentPacketsRef.current.map(p => {
+                const hex = Array.from(p.data, (b) => b.toString(16).padStart(2, '0')).join('');
+                return {
+                    timestamp: new Date(p.timestamp).toISOString().split('T')[1],
+                    uuid: p.uuid ? p.uuid.substring(0, 8) : 'unknown',
+                    hex
+                };
+            });
+            setRecentPackets(displayPackets);
+        });
 
         return () => {
             sub.unsubscribe();
-            clearInterval(interval);
+            if (sessionIdRef.current) {
+                const finalId = sessionIdRef.current;
+                getPacketSessions().then(list => {
+                    const meta = list.find(s => s.id === finalId);
+                    if (meta) {
+                        meta.endTime = Date.now();
+                        savePacketSessionMetadata(meta).then(loadSessions);
+                    }
+                });
+            }
+            sessionIdRef.current = null;
         };
     }, [clientRef, isLogging, status]);
 
-    // Clear UI state when logging stops
-    useEffect(() => {
-        if (!isLogging) {
-            setPackets([]);
-        }
-    }, [isLogging]);
-
-    const downloadLogs = () => {
-        const allPackets = packetsRef.current;
-        if (allPackets.length === 0) return;
+    const downloadSession = async (session: PacketSessionMetadata) => {
+        const data = await getPacketDataForSession(session.id);
+        if (data.length === 0) return;
 
         let content = "Timestamp,UUID,HexData\n";
-        allPackets.forEach(p => {
+        data.forEach(p => {
             const hex = Array.from(p.data, (b) => b.toString(16).padStart(2, '0')).join('');
             const ts = new Date(p.timestamp).toISOString();
             content += `${ts},${p.uuid},${hex}\n`;
@@ -82,60 +112,96 @@ export function AthenaLogger({ clientRef, status }: PacketLoggerProps) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `athena_logs_${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+        a.download = `athena_packets_${session.id}.csv`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     };
 
-    const clearLogs = () => {
-        packetsRef.current = [];
-        setPackets([]);
-        setCapturedCount(0);
+    const handleDelete = async (id: string) => {
+        if (confirm('Delete this packet log?')) {
+            await deletePacketSession(id);
+            loadSessions();
+        }
     };
 
     return (
         <div className="glass-panel animate-fade-in" style={{ padding: '24px' }}>
-            <h2 style={{ marginTop: 0 }}>Athena Packet Logger</h2>
+            <h2 style={{ marginTop: 0 }}>Athena Packet Logger (DB)</h2>
 
             <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '24px' }}>
-                Capture raw Bluetooth traffic from the Athena device for reverse engineering.
+                Capture raw Bluetooth traffic to IndexedDB. Safe for long sessions.
             </div>
 
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', alignItems: 'center' }}>
                 <button
                     className="btn"
-                    onClick={() => setIsLogging(!isLogging)}
+                    onClick={() => {
+                        if (isLogging) {
+                            setIsLogging(false);
+                            setCapturedCount(0);
+                            setRecentPackets([]);
+                            currentPacketsRef.current = [];
+                        } else {
+                            setIsLogging(true);
+                        }
+                    }}
                     disabled={status !== 'connected'}
-                    style={{ backgroundColor: isLogging ? 'var(--danger)' : '#10b981', color: 'white' }}
+                    style={{ backgroundColor: isLogging ? '#ef4444' : '#10b981', color: 'white' }}
                 >
-                    {isLogging ? 'Stop Logging' : 'Start Logging'}
+                    {isLogging ? 'Stop Recording' : 'Start Packet Recording'}
                 </button>
 
-                <button className="btn btn-outline" onClick={downloadLogs} disabled={capturedCount === 0}>
-                    Download Logs ({capturedCount})
-                </button>
-
-                <button className="btn btn-outline" onClick={clearLogs} disabled={capturedCount === 0}>
-                    Clear Logs
-                </button>
+                {isLogging && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span className="badge" style={{ backgroundColor: '#ef4444', color: 'white', animation: 'pulse 2s infinite' }}>REC</span>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{capturedCount} packets</span>
+                    </div>
+                )}
             </div>
 
-            <div>
-                <strong style={{ color: 'var(--text-muted)' }}>Captured Packets:</strong> <span style={{ color: 'var(--accent)' }}>{capturedCount}</span>
-                {packets.length > 0 && (
-                    <div style={{ marginTop: '16px', maxHeight: '300px', overflowY: 'auto', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: '8px', padding: '12px', fontFamily: 'monospace', fontSize: '12px' }}>
-                        {packets.map((p, i) => {
-                            return (
-                                <div key={i} style={{ padding: '2px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                    <span style={{ color: 'var(--text-muted)' }}>{p.timestamp}</span>{' '}
-                                    <span style={{ color: 'var(--accent)' }}>{p.uuid}</span>... {p.hex}
-                                </div>
-                            );
-                        })}
-                        {capturedCount > 200 && <div style={{ textAlign: 'center', padding: '8px', color: 'var(--text-muted)' }}>... (showing last 200, download to see all {capturedCount})</div>}
+            {isLogging && recentPackets.length > 0 && (
+                <div style={{ marginBottom: '24px' }}>
+                    <strong style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Live Stream (Last 50):</strong>
+                    <div style={{ marginTop: '8px', maxHeight: '150px', overflowY: 'auto', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: '8px', padding: '12px', fontFamily: 'monospace', fontSize: '11px' }}>
+                        {recentPackets.map((p, i) => (
+                            <div key={i} style={{ padding: '2px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                <span style={{ color: 'var(--text-muted)' }}>{p.timestamp}</span> <span style={{ color: 'var(--accent)' }}>{p.uuid}</span> {p.hex}
+                            </div>
+                        ))}
                     </div>
+                </div>
+            )}
+
+            <h3 style={{ fontSize: '1.1rem', marginBottom: '16px', borderTop: '1px solid var(--panel-border)', paddingTop: '24px' }}>Saved Packet Logs</h3>
+            <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                {sessions.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.1)', borderRadius: '8px' }}>
+                        No logs saved.
+                    </div>
+                ) : (
+                    <table style={{ width: '100%', fontSize: '0.85rem' }}>
+                        <thead>
+                            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--panel-border)' }}>
+                                <th style={{ padding: '8px' }}>Start Time</th>
+                                <th style={{ padding: '8px' }}>Duration</th>
+                                <th style={{ padding: '8px' }}>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {sessions.map(s => (
+                                <tr key={s.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                    <td style={{ padding: '8px' }}>{new Date(s.startTime).toLocaleString()}</td>
+                                    <td style={{ padding: '8px' }}>{s.endTime ? `${Math.round((s.endTime - s.startTime) / 1000)}s` : 'Logging...'}</td>
+                                    <td style={{ padding: '8px', display: 'flex', gap: '8px' }}>
+                                        <button className="btn btn-outline" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => downloadSession(s)}>CSV</button>
+                                        <button className="btn" style={{ padding: '2px 8px', fontSize: '0.75rem', background: 'rgba(239, 68, 68, 0.1)', color: '#f87171' }} onClick={() => handleDelete(s.id)}>Del</button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
                 )}
             </div>
         </div>

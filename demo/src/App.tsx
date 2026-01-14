@@ -10,8 +10,10 @@ import {
     zipSamples
 } from '../../src';
 import { notchFilter, bandpassFilter, epoch } from '@neurosity/pipes';
-import { tap, map, BehaviorSubject, switchMap, Subscription, Observable } from 'rxjs';
+import { tap, map, BehaviorSubject, switchMap, Subscription, Observable, share } from 'rxjs';
 import { AthenaLogger } from './AthenaLogger';
+import { EEGRecorder } from './EEGRecorder';
+import { EEGSample } from '../../src/lib/zip-samples';
 
 // --- Types ---
 
@@ -56,7 +58,7 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
         filterSettings$.current.next(filterSettings);
     }, [filterSettings]);
 
-    // Update setData logic is now handled in the stream pipeline via epoch
+    const [filteredStream$, setFilteredStream$] = useState<Observable<EEGSample> | null>(null);
 
     const connect = async () => {
         if (status === 'connected' || status === 'connecting') return;
@@ -86,8 +88,6 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
 
             // Handle deviceInfo based on mode
             if (mode === 'muse') {
-                // Classic Muse needs a moment to stabilize after multiple startNotifications calls
-                // and sequential GATT operations to avoid conflicts
                 await new Promise(resolve => setTimeout(resolve, 500));
                 try {
                     const info = await (client as any).deviceInfo();
@@ -96,7 +96,6 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
                     console.warn('Could not retrieve classic device info', err);
                 }
             } else {
-                // Athena: Non-blocking as requested
                 (client as any).deviceInfo().then((info: any) => {
                     console.log('[useMuse] Athena Device Connected:', info);
                 }).catch((err: any) => {
@@ -113,114 +112,101 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
         } catch (e: any) {
             console.error('Connection error:', e);
             setStatus('disconnected');
-            // If the error happens during connection, give a hint
             if (e.message?.includes('GATT')) {
                 alert('Connection failed: Device might have disconnected. Please try again.');
             }
         }
     };
 
-    // --- View-Dependent Stream Management ---
+    // --- Core Stream Management ---
     useEffect(() => {
         const client = clientRef.current;
         if (status !== 'connected' || !client) {
             subscriptionsRef.current.forEach(s => s.unsubscribe());
             subscriptionsRef.current = [];
+            setFilteredStream$(null);
             return;
         }
 
-        // Cleanup any previous view-specific subscriptions
+        // Cleanup previous base subscriptions
         subscriptionsRef.current.forEach(s => s.unsubscribe());
         subscriptionsRef.current = [];
 
-        if (view === 'graph') {
-            console.log('[useMuse] Switching to Graph mode - Starting EEG stream');
-            const nbChannels = mode === 'athena' ? 8 : (enableAux ? 5 : 4);
-            const samplingRate = 256;
+        const nbChannels = mode === 'athena' ? 8 : (enableAux ? 5 : 4);
+        const samplingRate = 256;
 
-            // Sensors (Battery/Accel)
-            if (client instanceof MuseClient) {
-                subscriptionsRef.current.push(client.telemetryData.subscribe(t => {
-                    setBattery(t.batteryLevel.toFixed(2) + '%');
-                }));
-                subscriptionsRef.current.push(client.accelerometerData.subscribe(accel => {
-                    setAccelerometer({ x: accel.samples[2].x, y: accel.samples[2].y, z: accel.samples[2].z });
-                }));
-            } else if (client instanceof MuseAthenaClient) {
-                subscriptionsRef.current.push(client.batteryData.subscribe(t => {
-                    setBattery(String(t.values[0] || '?'));
-                }));
-                subscriptionsRef.current.push(client.accGyroReadings.subscribe(accel => {
-                    setAccelerometer({ x: accel.acc?.x || 0, y: accel.acc?.y || 0, z: accel.acc?.z || 0 });
-                }));
-            }
-
-            // EEG with dynamic filtering
-            subscriptionsRef.current.push(filterSettings$.current.pipe(
-                switchMap(settings => {
-                    if (!clientRef.current || !client.eegReadings) return [];
-                    let stream = client.eegReadings.pipe(
-                        //For debug all eeg logs
-                        // tap(r => {
-                        //     console.log(`[RAW EEG] ${mode.toUpperCase()} ch=${r.electrode} i=${r.index} t=${r.timestamp.toFixed(1)} sl=${r.samples.length} samples=[${r.samples[0].toFixed(1)}, ...]`);
-                        // }),
-                        zipSamples
-                    );
-                    if (settings.notchEnabled) {
-                        stream = stream.pipe(notchFilter({ nbChannels, cutoffFrequency: settings.notchFrequency }));
-                    }
-                    if (settings.bandpassEnabled) {
-                        stream = stream.pipe(bandpassFilter({
-                            nbChannels,
-                            cutoffFrequencies: [settings.bandpassLow, settings.bandpassHigh],
-                            samplingRate
-                        }));
-                    }
-
-                    // Add epoch to window the data for the graph
-                    // duration: 250 samples (~1 second view)
-                    // interval: 25 samples (~100ms update frequency / 10fps)
-                    return (stream.pipe(
-                        epoch({ duration: 250, interval: 25, samplingRate }) as any
-                    ) as Observable<any>).pipe(
-                        map((epoched: { data: number[][], info: any }) => {
-                            // Convert from [channel][sample] to [sample]{ ch0, ch1, ... }
-                            const numSamples = epoched.data[0].length;
-                            const readings: Reading[] = [];
-                            for (let i = 0; i < numSamples; i++) {
-                                const reading: Reading = { index: i, timestamp: Date.now() };
-                                epoched.data.forEach((chData: number[], chIdx: number) => {
-                                    reading[`ch${chIdx}`] = chData[i];
-                                });
-                                readings.push(reading);
-                            }
-                            return readings;
-                        }),
-                        tap((readings: Reading[]) => setData(readings))
-                    );
-                }),
-            ).subscribe({
-                next: () => {
-                },
-                error: (err) => {
-                    console.error('[App] EEG Stream error:', err);
-                    if (err.message?.includes('GATT')) setStatus('disconnected');
-                },
-                complete: () => {
-                    console.warn('[App] EEG Stream completed (unexpectedly)');
-                }
+        // Sensors (Battery/Accel)
+        if (client instanceof MuseClient) {
+            subscriptionsRef.current.push(client.telemetryData.subscribe(t => {
+                setBattery(t.batteryLevel.toFixed(2) + '%');
             }));
-        } else if (view === 'logger') {
-            console.log('[useMuse] Switching to Logger mode - EEG processing stopped');
-            // PacketLogger component handles its own subscription when mounted
-            // We just ensure EEG/Sensors are NOT subscribed here (handled by the cleanup at top)
+            subscriptionsRef.current.push(client.accelerometerData.subscribe(accel => {
+                setAccelerometer({ x: accel.samples[2].x, y: accel.samples[2].y, z: accel.samples[2].z });
+            }));
+        } else if (client instanceof MuseAthenaClient) {
+            subscriptionsRef.current.push(client.batteryData.subscribe(t => {
+                setBattery(String(t.values[0] || '?'));
+            }));
+            subscriptionsRef.current.push(client.accGyroReadings.subscribe(accel => {
+                setAccelerometer({ x: accel.acc?.x || 0, y: accel.acc?.y || 0, z: accel.acc?.z || 0 });
+            }));
         }
+
+        // EEG with dynamic filtering - Base Filtered Stream
+        const baseFilteredStream$ = filterSettings$.current.pipe(
+            switchMap(settings => {
+                if (!clientRef.current || !client.eegReadings) return [];
+                let stream = client.eegReadings.pipe(zipSamples);
+                if (settings.notchEnabled) {
+                    stream = stream.pipe(notchFilter({ nbChannels, cutoffFrequency: settings.notchFrequency }));
+                }
+                if (settings.bandpassEnabled) {
+                    stream = stream.pipe(bandpassFilter({
+                        nbChannels,
+                        cutoffFrequencies: [settings.bandpassLow, settings.bandpassHigh],
+                        samplingRate
+                    }));
+                }
+                return stream;
+            }),
+            share()
+        );
+
+        setFilteredStream$(baseFilteredStream$ as Observable<EEGSample>);
 
         return () => {
             subscriptionsRef.current.forEach(s => s.unsubscribe());
             subscriptionsRef.current = [];
         };
-    }, [status, view, mode, enableAux]);
+    }, [status, mode, enableAux]);
+
+    // --- View-Dependent Graph Subscription ---
+    useEffect(() => {
+        if (view === 'graph' && filteredStream$ && status === 'connected') {
+            const samplingRate = 256;
+            const sub = filteredStream$.pipe(
+                epoch({ duration: 250, interval: 25, samplingRate }) as any,
+                map((epoched: { data: number[][], info: any }) => {
+                    const numSamples = epoched.data[0].length;
+                    const readings: Reading[] = [];
+                    for (let i = 0; i < numSamples; i++) {
+                        const reading: Reading = { index: i, timestamp: Date.now() };
+                        epoched.data.forEach((chData: number[], chIdx: number) => {
+                            reading[`ch${chIdx}`] = chData[i];
+                        });
+                        readings.push(reading);
+                    }
+                    return readings;
+                }),
+                tap((readings: Reading[]) => setData(readings))
+            ).subscribe({
+                error: (err) => {
+                    console.error('[App] Graph Stream error:', err);
+                }
+            });
+            return () => sub.unsubscribe();
+        }
+    }, [view, filteredStream$, status]);
 
 
     const disconnect = async () => {
@@ -245,7 +231,8 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
         data,
         filterSettings,
         setFilterSettings,
-        clientRef
+        clientRef,
+        filteredStream$
     };
 }
 
@@ -374,23 +361,33 @@ function EEGGraph({
 export default function App() {
     // URL-based routing to ensure absolute separation
     const urlParams = new URLSearchParams(window.location.search);
-    const initialView = urlParams.get('view') === 'logger' ? 'logger' : 'graph';
+    const initialView = urlParams.get('view') || 'graph';
 
     const [mode, setMode] = useState<'muse' | 'athena'>('athena');
     const [enableAux, setEnableAux] = useState(false);
-    const [currentView] = useState<'graph' | 'logger'>(initialView);
+    const [currentView, setCurrentView] = useState<'graph' | 'logger' | 'recording'>(initialView as any);
     const [selectedPreset, setSelectedPreset] = useState<AthenaPreset>('p1045');
     const [visibleChannels, setVisibleChannels] = useState<boolean[]>(new Array(8).fill(true));
     const [yRange, setYRange] = useState(200);
 
-    const switchView = (v: 'graph' | 'logger') => {
+    const switchView = (v: 'graph' | 'logger' | 'recording') => {
+        setCurrentView(v);
         const url = new URL(window.location.href);
         url.searchParams.set('view', v);
-        window.location.href = url.toString(); // Full reload to ensure absolute cleanup
+        window.history.pushState({}, '', url.toString());
     };
 
-    const { connect, disconnect, status, battery, accelerometer, data, filterSettings, setFilterSettings, clientRef }
-        = useMuse(mode, enableAux, currentView, selectedPreset);
+    useEffect(() => {
+        const handlePopState = () => {
+            const params = new URLSearchParams(window.location.search);
+            setCurrentView((params.get('view') || 'graph') as any);
+        };
+        window.addEventListener('popstate', handlePopState);
+        return () => window.removeEventListener('popstate', handlePopState);
+    }, []);
+
+    const { connect, disconnect, status, battery, accelerometer, data, filterSettings, setFilterSettings, clientRef, filteredStream$ }
+        = useMuse(mode, enableAux, currentView === 'recording' ? 'graph' : currentView, selectedPreset);
 
     // Force Athena mode if in Logger view
     useEffect(() => {
@@ -432,6 +429,12 @@ export default function App() {
                     onClick={() => switchView('graph')}
                 >
                     EEG Graph
+                </button>
+                <button
+                    className={`tab-btn ${currentView === 'recording' ? 'active' : ''}`}
+                    onClick={() => switchView('recording')}
+                >
+                    EEG Data Logger
                 </button>
                 <button
                     className={`tab-btn ${currentView === 'logger' ? 'active' : ''}`}
@@ -505,6 +508,15 @@ export default function App() {
                                 setSettings={setFilterSettings}
                             />
 
+                            <EEGRecorder
+                                stream$={filteredStream$}
+                                mode={mode}
+                                preset={selectedPreset}
+                                isAuxEnabled={enableAux}
+                                filterSettings={filterSettings}
+                                minimal={true}
+                            />
+
                             <div className="glass-panel" style={{ padding: '24px' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                                     <h3 style={{ margin: 0 }}>EEG Channels</h3>
@@ -560,10 +572,14 @@ export default function App() {
                         />
                     )}
 
-                    {currentView === 'logger' && mode !== 'athena' && (
-                        <div className="glass-panel" style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                            Packet Logger is only available for Athena / Muse S (Gen 3) devices.
-                        </div>
+                    {currentView === 'recording' && (
+                        <EEGRecorder
+                            stream$={filteredStream$}
+                            mode={mode}
+                            preset={selectedPreset}
+                            isAuxEnabled={enableAux}
+                            filterSettings={filterSettings}
+                        />
                     )}
                 </main>
 
