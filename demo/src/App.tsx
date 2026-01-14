@@ -1,7 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, YAxis, Legend, ResponsiveContainer } from 'recharts';
-import { MuseClient, channelNames as museChannelNames, zipSamples } from '../../src/muse';
-import { MuseAthenaClient, channelNames as athenaChannelNames, ATHENA_PRESETS, AthenaPreset } from '../../src/muse-athena';
+import {
+    MuseClient,
+    MuseAthenaClient,
+    channelNames as museChannelNames,
+    athenaChannelNames,
+    ATHENA_PRESETS,
+    AthenaPreset,
+    zipSamples
+} from '../../src';
 import { notchFilter, bandpassFilter, epoch } from '@neurosity/pipes';
 import { tap, map, BehaviorSubject, switchMap, Subscription, Observable } from 'rxjs';
 import { AthenaLogger } from './AthenaLogger';

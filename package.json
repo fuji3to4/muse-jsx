@@ -2,14 +2,15 @@
   "name": "muse-jsx",
   "version": "0.1.0",
   "description": "Reconstructed muse-js: Muse EEG Headset JavaScript Library",
-  "main": "dist/muse.js",
-  "typings": "dist/muse.d.ts",
+  "main": "dist/index.js",
+  "typings": "dist/index.d.ts",
   "repository": "https://github.com/fuji3to4/muse-jsx",
   "author": "Satoshi Fujiii",
   "license": "MIT",
   "scripts": {
-    "build": "tsc",
+    "build": "npm run clean && tsc",
     "build:demo": "vite build",
+    "clean": "rimraf dist",
     "format": "prettier --write \"src/**/*.ts\" \"**/*.json\"",
     "precommit": "lint-staged",
     "prepare": "npm run build",
@@ -22,10 +23,12 @@
     "dist"
   ],
   "devDependencies": {
+    "@neurosity/pipes": "^5.2.1",
     "@types/jest": "^29.5.13",
     "@types/node": "^20.11.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@types/web-bluetooth": "^0.0.20",
     "@typescript-eslint/eslint-plugin": "^8.11.0",
     "@typescript-eslint/parser": "^8.11.0",
     "@vitejs/plugin-react": "^5.1.2",
@@ -37,17 +40,16 @@
     "jest-environment-jsdom": "^29.7.0",
     "lint-staged": "^15.2.10",
     "prettier": "^3.3.3",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "recharts": "^3.6.0",
+    "rimraf": "^6.1.2",
     "ts-jest": "^29.2.5",
     "typescript": "^5.6.3",
     "vite": "^7.1.12",
     "web-bluetooth-mock": "^1.0.2"
   },
   "dependencies": {
-    "@neurosity/pipes": "^5.2.1",
-    "@types/web-bluetooth": "^0.0.20",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
-    "recharts": "^3.6.0",
     "rxjs": "^7.8.1"
   },
   "jest": {
