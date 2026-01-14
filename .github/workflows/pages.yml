@@ -48,9 +48,6 @@ jobs:
           path: dist-demo
 
   deploy:
-    environment:
-      name: github-pages
-      url: https://fuji3to4.github.io/muse-jsx/
     needs: build
     runs-on: ubuntu-latest
     steps:
