@@ -14,7 +14,7 @@ export interface RecordingMetadata {
     preset?: string;
     sampleRate: number;
     channels: string[];
-    filterSettings?: any;
+    filterSettings?: Record<string, unknown>;
 }
 
 export interface PacketSessionMetadata {

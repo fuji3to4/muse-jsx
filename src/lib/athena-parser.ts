@@ -15,6 +15,7 @@
 /**
  * Metadata about the Athena tags based on bitmasks
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const ATHENA_FREQ_MAP: Record<number, number> = {
     0x0: 0, // Invalid
     0x1: 256,
@@ -60,6 +61,7 @@ export interface AthenaParsedPacket {
 /**
  * Convert bytes to bit array (LSB-first per byte)
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function bytesToBitarray(data: Uint8Array): number[] {
     const bits: number[] = [];
     for (const byte of data) {
