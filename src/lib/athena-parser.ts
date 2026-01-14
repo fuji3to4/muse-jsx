@@ -12,8 +12,39 @@
  * Use findTaggedPacket() from muse-athena.ts for BLE notification packets with headers.
  */
 
+/**
+ * Metadata about the Athena tags based on bitmasks
+ */
+const ATHENA_FREQ_MAP: Record<number, number> = {
+    0x0: 0, // Invalid
+    0x1: 256,
+    0x2: 128,
+    0x3: 64,
+    0x4: 52,
+    0x5: 32,
+    0x6: 16,
+    0x7: 10,
+    0x8: 1,
+    0x9: 0.1,
+};
+
+/**
+ * Data types from the lower 4 bits of the tag
+ */
+export enum AthenaDataType {
+    INVALID = 0,
+    EEG_4CH = 1,
+    EEG_8CH = 2,
+    DRL_REF = 3,
+    OPTICAL_4CH = 4,
+    OPTICAL_8CH = 5,
+    OPTICAL_16CH = 6,
+    IMU = 7,
+    BATTERY = 8,
+}
+
 export interface AthenaEntry {
-    type: string; // 'EEG', 'ACC', 'GYRO', 'OPTICAL', 'BATTERY'
+    type: string; // 'EEG', 'ACC', 'GYRO', 'OPTICAL', 'BATTERY', 'DRL_REF'
     data: number[];
 }
 
@@ -22,6 +53,7 @@ export interface AthenaParsedPacket {
     tag: number;
     type: string;
     samples: number;
+    freqHz: number;
     entries: AthenaEntry[];
 }
 
@@ -41,25 +73,38 @@ function bytesToBitarray(data: Uint8Array): number[] {
 /**
  * Parse unsigned 14-bit little-endian values from buffer using bitwise operations
  */
-function parseUint14LEValues(buf: Uint8Array): number[] {
-    const width = 14;
-    const nVals = Math.floor((buf.length * 8) / width);
+/**
+ * Parse unsigned X-bit little-endian values from buffer
+ */
+function parseUintLEValues(buf: Uint8Array, bitWidth: number): number[] {
+    const nVals = Math.floor((buf.length * 8) / bitWidth);
     const out: number[] = [];
 
-    // Working with bits directly from the buffer
     for (let i = 0; i < nVals; i++) {
         let val = 0;
-        for (let bitIndex = 0; bitIndex < width; bitIndex++) {
-            const totalBitOffset = i * width + bitIndex;
+        for (let bitIndex = 0; bitIndex < bitWidth; bitIndex++) {
+            const totalBitOffset = i * bitWidth + bitIndex;
             const byteOffset = Math.floor(totalBitOffset / 8);
             const bitInByte = totalBitOffset % 8;
-            if ((buf[byteOffset] >> bitInByte) & 1) {
-                val |= 1 << bitIndex;
+            if (byteOffset < buf.length) {
+                if ((buf[byteOffset] >> bitInByte) & 1) {
+                    val |= 1 << bitIndex;
+                }
             }
         }
         out.push(val);
     }
     return out;
+}
+
+/**
+ * Parse signed X-bit little-endian values from buffer
+ */
+function parseIntLEValues(buf: Uint8Array, bitWidth: number): number[] {
+    const uints = parseUintLEValues(buf, bitWidth);
+    const maxVal = 1 << bitWidth;
+    const halfVal = 1 << (bitWidth - 1);
+    return uints.map((v) => (v >= halfVal ? v - maxVal : v));
 }
 
 /**
@@ -79,170 +124,111 @@ function bitsToInt(bits: number[], startIdx: number, width: number): number {
  * Parse a single packet based on tag
  * Returns: [nextIndex, packetTypeName, entries, samples]
  */
+/**
+ * Parse a single packet based on tag
+ * Returns: [nextIndex, packetTypeName, entries, samples, freqHz]
+ */
 export function parsePacket(
     data: Uint8Array,
     tag: number,
     tagIndex: number,
     verbose: boolean = false,
-): [number, string, AthenaEntry[], number] {
-    // After tag byte, skip 4 bytes
+): [number, string, AthenaEntry[], number, number] {
     const payloadStart = tagIndex + 1 + 4;
 
     switch (tag) {
+        case 0x11:
         case 0x12: {
-            // EEG: 8 channels x 2 samples, 14-bit at 256 Hz
+            // EEG (4ch/8ch): 8 channels x 2 samples (interleaved or padded), 14-bit
+            // Even 4ch seems to use 33-byte blocks in p21 logs
             const payloadLen = 28;
             const endIndex = payloadStart + payloadLen;
-            if (endIndex > data.length) {
-                throw new Error(`Not enough data for tag 0x12: need ${endIndex}, have ${data.length}`);
-            }
+            if (endIndex > data.length) return [tagIndex + 1, 'EEG_PARTIAL', [], 1, 0];
 
-            const block28 = data.subarray(payloadStart, endIndex);
-            const values = parseUint14LEValues(block28);
-
+            const block = data.subarray(payloadStart, endIndex);
+            const values = parseUintLEValues(block, 14);
             // Scale 14-bit values to microvolts and center at 0
             // Offset binary: 8192 is the center (0 uV)
             // MuseAthenaDataformatParser uses 1450 µV for full scale (2^14 - 1 = 16383)
             // Scaling: 1450 uV / 16384 LSB approx 0.0885
             const scaled = values.map((v) => (v - 8192) * 0.0885);
 
-            if (verbose) {
-                console.log('EEG:', scaled.slice(0, 8));
-                console.log('EEG:', scaled.slice(8, 16));
-            }
+            return [endIndex, 'EEG', [{ type: 'EEG', data: scaled }], 2, 256];
+        }
 
-            return [endIndex, 'EEG', [{ type: 'EEG', data: scaled }], 2];
+        case 0x53: {
+            // DRL/REF
+            const payloadLen = 7;
+            const endIndex = payloadStart + payloadLen;
+            if (endIndex > data.length) return [tagIndex + 1, 'DRL_REF_PARTIAL', [], 1, 0];
+
+            const block = data.subarray(payloadStart, endIndex);
+            const values = parseUintLEValues(block, 14);
+            const scaled = values.map((v) => (v - 8192) * 0.0885);
+            return [endIndex, 'DRL_REF', [{ type: 'DRL_REF', data: scaled }], 2, 32];
         }
 
         case 0x47: {
-            // ACC_GYRO: 3 samples x (ACC[3] + GYRO[3]), 12-bit at 52 Hz
-            const intsNeeded = 18;
-            const bytesNeeded = intsNeeded * 2;
-            const endIndex = payloadStart + bytesNeeded;
-            if (endIndex > data.length) {
-                throw new Error(`Not enough data for tag 0x47: need ${endIndex}, have ${data.length}`);
-            }
+            // IMU: 3 samples x (ACC[3] + GYRO[3]), 16-bit (verified via alignment)
+            const payloadLen = 36;
+            const endIndex = payloadStart + payloadLen;
+            if (endIndex > data.length) return [tagIndex + 1, 'ACC_GYRO_PARTIAL', [], 1, 0];
 
             const block = data.subarray(payloadStart, endIndex);
-            const view = new DataView(block.buffer, block.byteOffset);
+            const view = new DataView(block.buffer, block.byteOffset, block.byteLength);
             const vals: number[] = [];
             for (let i = 0; i < 18; i++) {
-                vals.push(view.getInt16(i * 2, true)); // true = little-endian
+                vals.push(view.getInt16(i * 2, true));
             }
 
             const entries: AthenaEntry[] = [];
             for (let i = 0; i < 3; i++) {
                 const base = i * 6;
-                const accRaw = vals.slice(base, base + 3);
-                const gyroRaw = vals.slice(base + 3, base + 6);
-
                 // Following amused-py IMU scaling (MuseAthenaDataformatParser uses this scaling)
                 // ACCEL_SCALE = 2.0 / 32768(=2^15)  (±2G range) ≈ 0.000061 G per LSB
                 // GYRO_SCALE = 250.0 / 32768(=2^15) (±250 dps range) ≈ 0.00763 dps per LSB
-                const accScaled = accRaw.map((x) => x * 0.0000610352);
-                const gyroScaled = gyroRaw.map((x) => x * -0.0074768);
-
-                if (verbose) {
-                    console.log(`ACC: ${accScaled}`);
-                    console.log(`GYRO: ${gyroScaled}`);
-                }
-
+                const accScaled = vals.slice(base, base + 3).map((x) => x * 0.0000610352);
+                const gyroScaled = vals.slice(base + 3, base + 6).map((x) => x * -0.0074768);
                 entries.push({ type: 'ACC', data: accScaled });
                 entries.push({ type: 'GYRO', data: gyroScaled });
             }
 
-            return [endIndex, 'ACC_GYRO', entries, 3];
+            return [endIndex, 'ACC_GYRO', entries, 3, 52];
         }
 
-        case 0x34: {
-            // OPTICAL: 3 samples x 4x20-bit at 64 Hz
-            const bytesNeeded = 30;
-            const endIndex = payloadStart + bytesNeeded;
-            if (endIndex > data.length) {
-                throw new Error(`Not enough data for tag 0x34: need ${endIndex}, have ${data.length}`);
-            }
+        case 0x34:
+        case 0x35: {
+            // OPTICAL: 3 samples x 4ch x 20-bit
+            const payloadLen = 30;
+            const endIndex = payloadStart + payloadLen;
+            if (endIndex > data.length) return [tagIndex + 1, 'OPTICAL_PARTIAL', [], 1, 0];
 
             const block = data.subarray(payloadStart, endIndex);
+            const values = parseUintLEValues(block, 20);
             const entries: AthenaEntry[] = [];
-            const bitWidth = 20;
-
-            for (let sample = 0; sample < 3; sample++) {
-                const sampleValues: number[] = [];
-                for (let value = 0; value < 4; value++) {
-                    const totalBitStart = (sample * 4 + value) * bitWidth;
-
-                    let intValue = 0;
-                    for (let i = 0; i < bitWidth; i++) {
-                        const bitPos = totalBitStart + i;
-                        const byteOff = bitPos >> 3;
-                        const bitInByte = bitPos & 7;
-                        if ((block[byteOff] >> bitInByte) & 1) {
-                            intValue |= 1 << i;
-                        }
-                    }
-                    sampleValues.push(intValue);
-                }
-                const scaled = sampleValues.map((x) => x / 32768);
+            for (let s = 0; s < 3; s++) {
+                const scaled = values.slice(s * 4, (s + 1) * 4).map((x) => x / 32768);
                 entries.push({ type: 'OPTICAL', data: scaled });
             }
 
-            return [endIndex, 'OPTICAL', entries, 3];
+            return [endIndex, 'OPTICAL', entries, 3, 64];
         }
 
-        case 0x88: {
-            // BATTERY: 10x 16-bit unsigned integers at 1 Hz
-            // Skip 4 bytes, then parse 10 16-bit unsigned integers
-            // 10 * 16 bits = 160 bits = 20 bytes
-
-            const bytesNeeded = 20;
-            const endIndex = payloadStart + bytesNeeded;
-            if (endIndex > data.length) {
-                throw new Error(`Not enough data for tag 0x88: need ${endIndex}, have ${data.length}`);
-            }
-
-            // ###1st ayyempt: return raw values without interpretation
-
-            // const block = data.subarray(payloadStart, endIndex);
-            // const view = new DataView(block.buffer, block.byteOffset);
-
-            // const values: number[] = [];
-            // for (let i = 0; i < 10; i++) {
-            //     // Read as little-endian 16-bit unsigned integers
-            //     const value = view.getUint16(i * 2, true);
-            //     values.push(value);
-            // }
-
-            // ### 2nd attempt: parse as bits (like other packets)
+        case 0x88:
+        case 0x98: {
+            // BATTERY: 20 bytes payload
+            const payloadLen = 20;
+            const endIndex = payloadStart + payloadLen;
+            if (endIndex > data.length) return [tagIndex + 1, 'BATTERY_PARTIAL', [], 1, 0];
 
             const block = data.subarray(payloadStart, endIndex);
-            const bits = bytesToBitarray(block);
-
-            const values: number[] = [];
-            for (let i = 0; i < 10; i++) {
-                const bitStart = i * 16;
-                const bitEnd = bitStart + 16;
-                if (bitEnd > bits.length) {
-                    throw new Error(`Not enough bits for 16-bit value ${i}`);
-                }
-
-                const intValue = bitsToInt(bits, bitStart, 16);
-                values.push(intValue);
-            }
-
-            if (verbose) {
-                console.log(`BATTERY: ${values}`);
-            }
-
-            return [endIndex, 'BATTERY', [{ type: 'BATTERY', data: values }], 1];
+            const values = parseUintLEValues(block, 16);
+            return [endIndex, 'BATTERY', [{ type: 'BATTERY', data: values }], 1, 1];
         }
 
         default: {
-            // Unknown tag: consume only the tag byte
             const unknownName = `UNKNOWN_0x${tag.toString(16).toUpperCase().padStart(2, '0')}`;
-            if (verbose) {
-                console.log(`Unhandled tag 0x${tag.toString(16)}: ${unknownName}`);
-            }
-            return [tagIndex + 1, unknownName, [], 1];
+            return [tagIndex + 1, unknownName, [], 1, 0];
         }
     }
 }
@@ -262,8 +248,9 @@ export function packetParser(
 
     while (idx < data.length) {
         const tag = data[idx];
+
         try {
-            const [nextIdx, packetName, entries, samples] = parsePacket(data, tag, idx, verbose);
+            const [nextIdx, packetName, entries, samples, freqHz] = parsePacket(data, tag, idx, verbose);
 
             if (packetName) {
                 if (packetName.startsWith('UNKNOWN_0x')) {
@@ -288,6 +275,7 @@ export function packetParser(
                         tag,
                         type: packetName,
                         samples,
+                        freqHz,
                         entries,
                     });
                 }

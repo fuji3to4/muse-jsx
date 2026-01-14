@@ -159,17 +159,17 @@ export class MuseAthenaClient {
         );
 
         this.eegReadings = rawSensorPackets$.pipe(
-            mergeMap((packet) => this.parseAthenaPacketForTag<EEGReading>(packet, 0x12)),
+            mergeMap((packet) => this.parseAthenaPacketForType<EEGReading>(packet, 'EEG')),
             share(),
         );
 
         this.accGyroReadings = rawSensorPackets$.pipe(
-            mergeMap((packet) => this.parseAthenaPacketForTag<AthenaAccGyroSample>(packet, 0x47)),
+            mergeMap((packet) => this.parseAthenaPacketForType<AthenaAccGyroSample>(packet, 'ACC_GYRO')),
             share(),
         );
 
         this.opticalReadings = rawSensorPackets$.pipe(
-            mergeMap((packet) => this.parseAthenaPacketForTag<AthenaOpticalReading>(packet, 0x34)),
+            mergeMap((packet) => this.parseAthenaPacketForType<AthenaOpticalReading>(packet, 'OPTICAL')),
             share(),
         );
 
@@ -183,7 +183,7 @@ export class MuseAthenaClient {
         this.connectionStatus.next(true);
     }
 
-    private parseAthenaPacketForTag<T>(packet: Uint8Array, targetTag: number): Observable<T> {
+    private parseAthenaPacketForType<T>(packet: Uint8Array, targetType: string): Observable<T> {
         return new Observable<T>((observer) => {
             if (packet.length < 10) {
                 observer.complete();
@@ -195,28 +195,27 @@ export class MuseAthenaClient {
             while (idx < packet.length) {
                 const tag = packet[idx];
                 try {
-                    const [nextIdx, , entries] = parsePacket(packet, tag, idx, false);
-                    if (tag === targetTag) {
-                        if (tag === 0x12) {
-                            // !!! CRITICAL: Get timestamp ONCE per tag to keep channels synchronized
-                            const timestamp = this.getAthenaTimestamp(eventIndex, 2, 256, 'eeg');
+                    const [nextIdx, type, entries, samples, freqHz] = parsePacket(packet, tag, idx, false);
+                    if (type === targetType) {
+                        if (type === 'EEG') {
+                            const timestamp = this.getAthenaTimestamp(eventIndex, samples, freqHz, 'eeg');
                             for (const entry of entries) {
                                 const allSamples = entry.data;
-                                for (let ch = 0; ch < 8 && ch * 2 < allSamples.length; ch++) {
-                                    const samplesArr = allSamples.slice(ch * 2, ch * 2 + 2);
-                                    if (samplesArr.length === 2) {
-                                        observer.next({
-                                            index: eventIndex,
-                                            electrode: ch,
-                                            timestamp: timestamp, // Shared across channels
-                                            samples: samplesArr,
-                                        } as unknown as T);
-                                    }
+                                const channels = allSamples.length / samples;
+                                for (let ch = 0; ch < channels; ch++) {
+                                    // Use original slice logic for [ch0_s0, ch0_s1, ...]
+                                    const samplesArr = allSamples.slice(ch * samples, ch * samples + samples);
+                                    observer.next({
+                                        index: eventIndex,
+                                        electrode: ch,
+                                        timestamp: timestamp,
+                                        samples: samplesArr,
+                                    } as unknown as T);
                                 }
                             }
-                        } else if (tag === 0x47) {
-                            for (let i = 0; i < 3; i++) {
-                                const timestamp = this.getAthenaTimestamp(eventIndex, 1, 52, 'accgyro');
+                        } else if (type === 'ACC_GYRO') {
+                            for (let i = 0; i < samples; i++) {
+                                const timestamp = this.getAthenaTimestamp(eventIndex, 1, freqHz, 'accgyro');
                                 const accEntry = entries[i * 2];
                                 const gyroEntry = entries[i * 2 + 1];
                                 if (accEntry && accEntry.type === 'ACC') {
@@ -232,9 +231,9 @@ export class MuseAthenaClient {
                                     } as unknown as T);
                                 }
                             }
-                        } else if (tag === 0x34) {
-                            for (let i = 0; i < 3; i++) {
-                                const timestamp = this.getAthenaTimestamp(eventIndex, 1, 64, 'optical');
+                        } else if (type === 'OPTICAL') {
+                            for (let i = 0; i < samples; i++) {
+                                const timestamp = this.getAthenaTimestamp(eventIndex, 1, freqHz, 'optical');
                                 const optEntry = entries[i];
                                 if (optEntry && optEntry.type === 'OPTICAL') {
                                     observer.next({
@@ -246,13 +245,12 @@ export class MuseAthenaClient {
                                 }
                             }
                         }
-                    } else if (tag === 0x12 || tag === 0x47 || tag === 0x34) {
-                        // Mark time for other streaming tags even if they aren't our target
+                    } else if (type === 'EEG' || type === 'ACC_GYRO' || type === 'OPTICAL') {
                         this.getAthenaTimestamp(
                             eventIndex,
-                            1,
-                            256,
-                            tag === 0x12 ? 'eeg' : tag === 0x47 ? 'accgyro' : 'optical',
+                            samples,
+                            freqHz,
+                            type === 'EEG' ? 'eeg' : type === 'ACC_GYRO' ? 'accgyro' : 'optical',
                         );
                     }
 
@@ -275,15 +273,11 @@ export class MuseAthenaClient {
         while (idx < packet.length) {
             const tag = packet[idx];
             try {
-                const [nextIdx, , entries] = parsePacket(packet, tag, idx, false);
-                if (tag === 0x88) {
+                const [nextIdx, type, entries] = parsePacket(packet, tag, idx, false);
+                if (type === 'BATTERY') {
                     return { timestamp: Date.now(), values: entries[0].data };
                 }
-                if (nextIdx <= idx) {
-                    idx += 1;
-                } else {
-                    idx = nextIdx;
-                }
+                idx = nextIdx;
             } catch {
                 idx += 1;
             }

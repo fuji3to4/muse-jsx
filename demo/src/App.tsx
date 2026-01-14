@@ -105,8 +105,7 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
             }
 
             if (client instanceof MuseAthenaClient) {
-                const startPreset = view === 'graph' ? 'p1045' : preset;
-                await client.start(startPreset);
+                await client.start(preset);
             } else {
                 await client.start();
             }
@@ -254,7 +253,13 @@ const COLORS = ['#B34D4D', '#00B3E6', '#E6B333', '#99FF99', '#FF33FF', '#3366E6'
 
 // --- Filter Controls Component ---
 
-function FilterControls({ settings, setSettings }: { settings: FilterSettings, setSettings: React.Dispatch<React.SetStateAction<FilterSettings>> }) {
+function FilterControls({
+    settings,
+    setSettings
+}: {
+    settings: FilterSettings,
+    setSettings: React.Dispatch<React.SetStateAction<FilterSettings>>
+}) {
     const updateSetting = (key: keyof FilterSettings, value: any) => {
         setSettings(prev => ({ ...prev, [key]: value }));
     };
@@ -296,7 +301,7 @@ function FilterControls({ settings, setSettings }: { settings: FilterSettings, s
                     </label>
                     <div className="grid grid-cols-2" style={{ gap: '12px' }}>
                         <div className="input-group">
-                            <label>Low Cutoff (Hz)</label>
+                            <label>Low Cut (Hz)</label>
                             <input
                                 type="number"
                                 value={settings.bandpassLow}
@@ -305,7 +310,7 @@ function FilterControls({ settings, setSettings }: { settings: FilterSettings, s
                             />
                         </div>
                         <div className="input-group">
-                            <label>High Cutoff (Hz)</label>
+                            <label>High Cut (Hz)</label>
                             <input
                                 type="number"
                                 value={settings.bandpassHigh}
@@ -320,7 +325,17 @@ function FilterControls({ settings, setSettings }: { settings: FilterSettings, s
     );
 }
 
-function EEGGraph({ data, visibleChannels, channelNames }: { data: Reading[], visibleChannels: boolean[], channelNames: string[] }) {
+function EEGGraph({
+    data,
+    visibleChannels,
+    channelNames,
+    yRange
+}: {
+    data: Reading[],
+    visibleChannels: boolean[],
+    channelNames: string[],
+    yRange: number
+}) {
     if (data.length === 0) return (
         <div style={{ height: 400, display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#94a3b8', background: 'rgba(0,0,0,0.2)', borderRadius: '12px' }}>
             No Data Stream
@@ -331,7 +346,7 @@ function EEGGraph({ data, visibleChannels, channelNames }: { data: Reading[], vi
         <div className="glass-panel" style={{ height: 500, width: '100%', padding: '10px' }}>
             <ResponsiveContainer>
                 <LineChart data={data}>
-                    <YAxis domain={['auto', 'auto']} stroke="#475569" fontSize={12} />
+                    <YAxis domain={[-yRange, yRange]} stroke="#475569" fontSize={12} allowDataOverflow={true} />
                     <Legend verticalAlign="top" height={36} />
                     {visibleChannels.map((visible, idx) => (
                         visible && (
@@ -366,6 +381,7 @@ export default function App() {
     const [currentView] = useState<'graph' | 'logger'>(initialView);
     const [selectedPreset, setSelectedPreset] = useState<AthenaPreset>('p1045');
     const [visibleChannels, setVisibleChannels] = useState<boolean[]>(new Array(8).fill(true));
+    const [yRange, setYRange] = useState(200);
 
     const switchView = (v: 'graph' | 'logger') => {
         const url = new URL(window.location.href);
@@ -383,12 +399,6 @@ export default function App() {
         }
     }, [currentView, mode]);
 
-    // Force p1045 if in Graph view (Athena only)
-    useEffect(() => {
-        if (currentView === 'graph' && mode === 'athena' && selectedPreset !== 'p1045') {
-            setSelectedPreset('p1045');
-        }
-    }, [currentView, mode, selectedPreset]);
 
     const currentChannelNames = mode === 'athena' ? athenaChannelNames : museChannelNames;
 
@@ -449,15 +459,11 @@ export default function App() {
                                 <div className="input-group">
                                     <label>Start Preset</label>
                                     <select
-                                        value={currentView === 'graph' ? 'p1045' : selectedPreset}
+                                        value={selectedPreset}
                                         onChange={e => setSelectedPreset(e.target.value as AthenaPreset)}
-                                        disabled={status === 'connected' || currentView === 'graph'}
+                                        disabled={status === 'connected'}
                                     >
-                                        {currentView === 'graph' ? (
-                                            <option value="p1045">p1045</option>
-                                        ) : (
-                                            ATHENA_PRESETS.map(p => <option key={p} value={p}>{p}</option>)
-                                        )}
+                                        {ATHENA_PRESETS.map(p => <option key={p} value={p}>{p}</option>)}
                                     </select>
                                 </div>
                             )}
@@ -494,7 +500,10 @@ export default function App() {
 
                     {currentView === 'graph' && (
                         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                            <FilterControls settings={filterSettings} setSettings={setFilterSettings} />
+                            <FilterControls
+                                settings={filterSettings}
+                                setSettings={setFilterSettings}
+                            />
 
                             <div className="glass-panel" style={{ padding: '24px' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -512,7 +521,34 @@ export default function App() {
                                         ))}
                                     </div>
                                 </div>
-                                <EEGGraph data={data} visibleChannels={visibleChannels} channelNames={currentChannelNames} />
+                                <EEGGraph
+                                    data={data}
+                                    visibleChannels={visibleChannels}
+                                    channelNames={currentChannelNames}
+                                    yRange={yRange}
+                                />
+
+                                <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--panel-border)' }}>
+                                    <div className="input-group" style={{ maxWidth: '400px' }}>
+                                        <label style={{ fontWeight: 600, display: 'flex', justifyContent: 'space-between' }}>
+                                            <span>Y-Axis Range (± µV)</span>
+                                            <span style={{ color: 'var(--accent)' }}>{yRange} µV</span>
+                                        </label>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
+                                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>10</span>
+                                            <input
+                                                type="range"
+                                                min="10"
+                                                max="1000"
+                                                step="10"
+                                                value={yRange}
+                                                onChange={e => setYRange(Number(e.target.value))}
+                                                style={{ flex: 1 }}
+                                            />
+                                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>1000</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     )}
