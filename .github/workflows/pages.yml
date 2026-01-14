@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: "pages"
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -35,6 +35,12 @@ jobs:
 
       - name: Build demo (Vite)
         run: npm run build:demo
+
+      - name: Create .nojekyll file
+        run: touch dist-demo/.nojekyll
+
+      - name: List dist-demo contents
+        run: ls -la dist-demo/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
