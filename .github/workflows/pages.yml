@@ -44,7 +44,7 @@ jobs:
   deploy:
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: https://fuji3to4.github.io/muse-jsx/
     needs: build
     runs-on: ubuntu-latest
     steps:
