@@ -1,11 +1,11 @@
 {
   "name": "muse-jsx",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Reconstructed muse-js: Muse EEG Headset JavaScript Library",
   "main": "dist/muse.js",
   "typings": "dist/muse.d.ts",
   "repository": "https://github.com/fuji3to4/muse-jsx",
-  "author": "Satoshi Fujiii <sfujii@bio.kyutech.ac.jp>",
+  "author": "Satoshi Fujiii",
   "license": "MIT",
   "scripts": {
     "build": "tsc",

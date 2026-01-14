@@ -2,12 +2,12 @@
 
 Note (credit and provenance)
 
-This repository is a derivative of the original muse-js ([muse-js](https://github.com/urish/muse-js)), modified mainly via AI agent–assisted edits. 
+This repository is a derivative of the original muse-js ([muse-js](https://github.com/urish/muse-js)), modified via AI agent–assisted edits. 
 
  Muse 1, Muse 2, and Muse S EEG Headset JavaScript Library (using Web Bluetooth).
  Reconstruct muse-js from source code.
 
-## About this fork
+## About this
 
 - Original: <https://github.com/urish/muse-js>
 - License: See the included `LICENSE` (original attributions preserved).

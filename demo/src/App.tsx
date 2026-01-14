@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { LineChart, Line, YAxis, Legend, ResponsiveContainer } from 'recharts';
 import { MuseClient, channelNames as museChannelNames, zipSamples } from '../../src/muse';
 import { MuseAthenaClient, channelNames as athenaChannelNames, ATHENA_PRESETS, AthenaPreset } from '../../src/muse-athena';
-import { notchFilter, bandpassFilter } from '@neurosity/pipes';
-import { tap, BehaviorSubject, switchMap, Subscription } from 'rxjs';
+import { notchFilter, bandpassFilter, epoch } from '@neurosity/pipes';
+import { tap, map, BehaviorSubject, switchMap, Subscription, Observable } from 'rxjs';
 import { AthenaLogger } from './AthenaLogger';
 
 // --- Types ---
@@ -40,7 +40,6 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
         bandpassHigh: 40
     });
 
-    const dataBufferRef = React.useRef<Reading[]>([]);
     const clientRef = React.useRef<MuseClient | MuseAthenaClient | null>(null);
     const subscriptionsRef = React.useRef<Subscription[]>([]);
     const filterSettings$ = React.useRef(new BehaviorSubject<FilterSettings>(filterSettings));
@@ -50,25 +49,7 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
         filterSettings$.current.next(filterSettings);
     }, [filterSettings]);
 
-    useEffect(() => {
-        let animationFrameId: number;
-        let lastUpdateTime = 0;
-
-        const updateLoop = (timestamp: number) => {
-            if (view !== 'graph') return;
-
-            if (timestamp - lastUpdateTime > 100) { // 20fps is much safer for Recharts/SVG rendering
-                if (dataBufferRef.current.length > 0) {
-                    setData([...dataBufferRef.current]);
-                }
-                lastUpdateTime = timestamp;
-            }
-            animationFrameId = requestAnimationFrame(updateLoop);
-        };
-        animationFrameId = requestAnimationFrame(updateLoop);
-
-        return () => cancelAnimationFrame(animationFrameId);
-    }, [view]);
+    // Update setData logic is now handled in the stream pipeline via epoch
 
     const connect = async () => {
         if (status === 'connected' || status === 'connecting') return;
@@ -189,12 +170,31 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
                             samplingRate
                         }));
                     }
-                    return stream;
+
+                    // Add epoch to window the data for the graph
+                    // duration: 250 samples (~1 second view)
+                    // interval: 25 samples (~100ms update frequency / 10fps)
+                    return (stream.pipe(
+                        epoch({ duration: 250, interval: 25, samplingRate }) as any
+                    ) as Observable<any>).pipe(
+                        map((epoched: { data: number[][], info: any }) => {
+                            // Convert from [channel][sample] to [sample]{ ch0, ch1, ... }
+                            const numSamples = epoched.data[0].length;
+                            const readings: Reading[] = [];
+                            for (let i = 0; i < numSamples; i++) {
+                                const reading: Reading = { index: i, timestamp: Date.now() };
+                                epoched.data.forEach((chData: number[], chIdx: number) => {
+                                    reading[`ch${chIdx}`] = chData[i];
+                                });
+                                readings.push(reading);
+                            }
+                            return readings;
+                        }),
+                        tap((readings: Reading[]) => setData(readings))
+                    );
                 }),
-                tap(sample => pushSample(sample))
             ).subscribe({
                 next: () => {
-                    // Logging every sample is too much, but you can add a counter here if needed
                 },
                 error: (err) => {
                     console.error('[App] EEG Stream error:', err);
@@ -216,22 +216,6 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
         };
     }, [status, view, mode, enableAux]);
 
-    // Helper to push sample to buffer
-    const pushSample = (sample: { data: number[], timestamp: number, index: number }) => {
-        const reading: Reading = {
-            index: sample.index,
-            timestamp: sample.timestamp,
-        };
-        sample.data.forEach((val, idx) => {
-            reading[`ch${idx}`] = val;
-        });
-
-        dataBufferRef.current.push(reading);
-        // Keep buffer lean at all times, even if we are not rendering
-        if (dataBufferRef.current.length > 250) {
-            dataBufferRef.current.shift();
-        }
-    };
 
     const disconnect = async () => {
         if (clientRef.current) {
@@ -243,7 +227,6 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
 
     // Clear buffer when switching connection or mode or view
     useEffect(() => {
-        dataBufferRef.current = [];
         setData([]);
     }, [mode, status, view]);
 
