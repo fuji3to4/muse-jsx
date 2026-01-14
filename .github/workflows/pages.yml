@@ -34,7 +34,7 @@ jobs:
         run: npm run build
 
       - name: Build demo (Vite)
-        run: npx vite build
+        run: npm run build:demo
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
@@ -42,6 +42,9 @@ jobs:
           path: dist-demo
 
   deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     needs: build
     runs-on: ubuntu-latest
     steps:
