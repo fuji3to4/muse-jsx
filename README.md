@@ -7,14 +7,14 @@ JavaScript Library for Muse 2, Muse S (Classic) and Muse S (Athena) EEG Headsets
 ## About this
 
 This repository is a derivative of the original [muse-js](https://github.com/urish/muse-js), modified for compatibility with modern Node.js versions (20+) and RxJS (7+). 
-Additionally, it introduces experimental support for newer Muse S Athena.
+Additionally, it introduces experimental support for newer Muse S (Athena).
 
 - **Original:** <https://github.com/urish/muse-js>
 - **License:** See the included `LICENSE` (original attributions preserved).
 - **Improvements:**
   - Node.js 20+ compatibility fixes
   - RxJS 7+ support
-  - 🧪 **Experimental Support for Muse S Athena**
+  - 🧪 **Experimental Support for Muse S (Athena)**
 
 ## Installation
 
