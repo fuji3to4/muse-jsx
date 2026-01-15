@@ -16,9 +16,10 @@
   "author": "Satoshi Fujiii",
   "license": "MIT",
   "scripts": {
-    "build": "npm run clean && npm run build:cjs && npm run build:esm",
+    "build": "npm run clean && npm run build:cjs && npm run build:esm && npm run fix-esm",
     "build:cjs": "tsc -p tsconfig.json",
     "build:esm": "tsc -p tsconfig.esm.json",
+    "fix-esm": "node scripts/fix-esm-imports.js",
     "build:demo": "vite build",
     "clean": "rimraf dist dist-esm",
     "format": "prettier --write \"src/**/*.ts\" \"**/*.json\"",
