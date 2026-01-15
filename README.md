@@ -153,7 +153,7 @@ async function main() {
   await client.connect();
   await client.start('p1045'); // Start with a specific preset
   
-  client.athenaEegReadings.subscribe(reading => {
+  client.eegReadings.subscribe(reading => {
     console.log(reading.samples); // 8 channels, 256Hz
   });
 }
