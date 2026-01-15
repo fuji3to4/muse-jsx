@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { EEGDataPoint, RecordingMetadata, saveRecordingMetadata, addEEGDataPoints, getRecordings, deleteRecording, getEEGDataForRecording } from './db';
-import { EEGSample } from '../../src/lib/zip-samples';
+import { EEGSample } from 'muse-jsx';
 import { Observable, Subscription, bufferTime } from 'rxjs';
-import { athenaChannelNames, channelNames as museChannelNames } from '../../src';
+import { athenaChannelNames, channelNames as museChannelNames } from 'muse-jsx';
 
 interface EEGRecorderProps {
     stream$: Observable<EEGSample> | null;

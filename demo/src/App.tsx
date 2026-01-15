@@ -8,7 +8,7 @@ import {
     ATHENA_PRESETS,
     AthenaPreset,
     zipSamples
-} from '../../src';
+} from 'muse-jsx';
 import { notchFilter, bandpassFilter, epoch } from '@neurosity/pipes';
 import { tap, map, BehaviorSubject, switchMap, Subscription, Observable, share } from 'rxjs';
 import { AthenaLogger } from './AthenaLogger';

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MuseClient } from '../../src/muse';
-import { MuseAthenaClient } from '../../src/muse-athena';
+import { MuseClient, MuseAthenaClient } from 'muse-jsx';
 import { bufferTime } from 'rxjs';
 import {
     savePacketSessionMetadata,
