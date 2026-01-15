@@ -258,52 +258,74 @@ function FilterControls({
             <div className="grid grid-cols-2" style={{ gap: '24px' }}>
                 {/* Notch Filter */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <label className="checkbox-wrapper">
+                    <label className="checkbox-wrapper" title="Toggle Notch Filter on/off">
                         <input
                             type="checkbox"
                             checked={settings.notchEnabled}
                             onChange={e => updateSetting('notchEnabled', e.target.checked)}
+                            title="Enable or disable notch filter"
+                            aria-label="Enable notch filter"
                         />
                         <span style={{ fontWeight: 600 }}>Notch Filter</span>
                     </label>
                     <div className="input-group">
-                        <label>Frequency (Hz)</label>
+                        <label htmlFor="notch-freq">Frequency (Hz)</label>
                         <input
+                            id="notch-freq"
                             type="number"
                             value={settings.notchFrequency}
                             onChange={e => updateSetting('notchFrequency', Number(e.target.value))}
                             disabled={!settings.notchEnabled}
+                            title="Notch filter frequency in Hz"
+                            placeholder="60"
+                            aria-label="Notch filter frequency in Hz"
+                            min="1"
+                            max="500"
                         />
                     </div>
                 </div>
 
                 {/* Bandpass Filter */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <label className="checkbox-wrapper">
+                    <label className="checkbox-wrapper" title="Toggle Bandpass Filter on/off">
                         <input
                             type="checkbox"
                             checked={settings.bandpassEnabled}
                             onChange={e => updateSetting('bandpassEnabled', e.target.checked)}
+                            title="Enable or disable bandpass filter"
+                            aria-label="Enable bandpass filter"
                         />
                         <span style={{ fontWeight: 600 }}>Bandpass Filter</span>
                     </label>
                     <div className="grid grid-cols-2" style={{ gap: '12px' }}>
                         <div className="input-group">
-                            <label>Low Cut (Hz)</label>
+                            <label htmlFor="bandpass-low">Low Cut (Hz)</label>
                             <input
+                                id="bandpass-low"
                                 type="number"
                                 value={settings.bandpassLow}
                                 onChange={e => updateSetting('bandpassLow', Number(e.target.value))}
                                 disabled={!settings.bandpassEnabled}
+                                title="Bandpass low cutoff frequency in Hz"
+                                placeholder="5"
+                                aria-label="Bandpass low cutoff frequency"
+                                min="1"
+                                max="200"
                             />
                         </div>
                         <div className="input-group">
-                            <label>High Cut (Hz)</label>
+                            <label htmlFor="bandpass-high">High Cut (Hz)</label>
                             <input
+                                id="bandpass-high"
                                 type="number"
                                 value={settings.bandpassHigh}
                                 onChange={e => updateSetting('bandpassHigh', Number(e.target.value))}
                                 disabled={!settings.bandpassEnabled}
+                                title="Bandpass high cutoff frequency in Hz"
+                                placeholder="40"
+                                aria-label="Bandpass high cutoff frequency"
+                                min="1"
+                                max="200"
                             />
                         </div>
                     </div>
@@ -465,8 +487,8 @@ export default function App() {
                         <div className="glass-panel" style={{ padding: '24px' }}>
                             <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                                 <div className="input-group">
-                                    <label>Device Mode</label>
-                                    <select value={mode} onChange={e => setMode(e.target.value as any)} disabled={status === 'connected'}>
+                                    <label htmlFor="device-mode">Device Mode</label>
+                                    <select id="device-mode" value={mode} onChange={e => setMode(e.target.value as any)} disabled={status === 'connected'} aria-label="Device Mode" title="Select device mode (Athena or Muse Classic)">
                                         <option value="athena">Athena</option>
                                         <option value="muse" disabled={currentView === 'logger'}>Muse (Classic)</option>
                                     </select>
@@ -474,11 +496,14 @@ export default function App() {
 
                                 {mode === 'athena' && (
                                     <div className="input-group">
-                                        <label>Start Preset</label>
+                                        <label htmlFor="start-preset">Start Preset</label>
                                         <select
+                                            id="start-preset"
                                             value={selectedPreset}
                                             onChange={e => setSelectedPreset(e.target.value as AthenaPreset)}
                                             disabled={status === 'connected'}
+                                            aria-label="Start Preset"
+                                            title="Select recording preset"
                                         >
                                             {ATHENA_PRESETS.map(p => <option key={p} value={p}>{p}</option>)}
                                         </select>
@@ -486,8 +511,15 @@ export default function App() {
                                 )}
 
                                 {mode === 'muse' && (
-                                    <label className="checkbox-wrapper" style={{ paddingBottom: '10px' }}>
-                                        <input type="checkbox" checked={enableAux} onChange={e => setEnableAux(e.target.checked)} disabled={status === 'connected'} />
+                                    <label className="checkbox-wrapper" style={{ paddingBottom: '10px' }} title="Toggle auxiliary channel">
+                                        <input
+                                            type="checkbox"
+                                            checked={enableAux}
+                                            onChange={e => setEnableAux(e.target.checked)}
+                                            disabled={status === 'connected'}
+                                            title="Enable auxiliary channel"
+                                            aria-label="Enable auxiliary channel"
+                                        />
                                         <span>Enable Aux</span>
                                     </label>
                                 )}
@@ -537,16 +569,26 @@ export default function App() {
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                                     <h3 style={{ margin: 0 }}>EEG Channels</h3>
                                     <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                        {visibleChannels.map((vis, idx) => (
+                                        {visibleChannels.map((vis, idx) => {
+                                            const channelLabel = currentChannelNames[idx] || `Ch ${idx + 1}`;
+                                            return (
                                             <label
                                                 key={idx}
                                                 className="checkbox-wrapper"
                                                 style={{ fontSize: '0.85rem', color: COLORS[idx % COLORS.length], border: `1px solid ${vis ? COLORS[idx % COLORS.length] : 'var(--panel-border)'}`, padding: '4px 8px', borderRadius: '6px', background: vis ? 'rgba(255,255,255,0.05)' : 'transparent' }}
+                                                title={`Toggle visibility of ${channelLabel}`}
                                             >
-                                                <input type="checkbox" checked={vis} onChange={() => toggleChannel(idx)} />
-                                                {currentChannelNames[idx] || `Ch ${idx + 1}`}
+                                                <input
+                                                    type="checkbox"
+                                                    checked={vis}
+                                                    onChange={() => toggleChannel(idx)}
+                                                    title={`Show or hide ${channelLabel}`}
+                                                    aria-label={`Toggle ${channelLabel}`}
+                                                />
+                                                {channelLabel}
                                             </label>
-                                        ))}
+                                        );
+                                        })}
                                     </div>
                                 </div>
                                 <EEGGraph
@@ -558,13 +600,14 @@ export default function App() {
 
                                 <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--panel-border)' }}>
                                     <div className="input-group" style={{ maxWidth: '400px' }}>
-                                        <label style={{ fontWeight: 600, display: 'flex', justifyContent: 'space-between' }}>
+                                        <label style={{ fontWeight: 600, display: 'flex', justifyContent: 'space-between' }} htmlFor="y-axis-range">
                                             <span>Y-Axis Range (± µV)</span>
                                             <span style={{ color: 'var(--accent)' }}>{yRange} µV</span>
                                         </label>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
                                             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>10</span>
                                             <input
+                                                id="y-axis-range"
                                                 type="range"
                                                 min="10"
                                                 max="1000"
@@ -572,6 +615,8 @@ export default function App() {
                                                 value={yRange}
                                                 onChange={e => setYRange(Number(e.target.value))}
                                                 style={{ flex: 1 }}
+                                                aria-label="Y-Axis Range slider"
+                                                title="Y-Axis Range in microvolts (10-1000 µV)"
                                             />
                                             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>1000</span>
                                         </div>

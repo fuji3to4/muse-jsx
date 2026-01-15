@@ -6,5 +6,5 @@ dist-demo
 *.log
 .DS_Store
 coverage
-docs
+docs/*/
 muse-jsx.code-workspace
