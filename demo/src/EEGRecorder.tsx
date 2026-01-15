@@ -11,28 +11,64 @@ interface EEGRecorderProps {
     isAuxEnabled: boolean;
     filterSettings: any;
     minimal?: boolean;
+    onRecordingsChange?: (count: number) => void;
 }
 
-export function EEGRecorder({ stream$, mode, preset, isAuxEnabled, filterSettings, minimal = false }: EEGRecorderProps) {
+export function EEGRecorder({ stream$, mode, preset, isAuxEnabled, filterSettings, minimal = false, onRecordingsChange }: EEGRecorderProps) {
     const [isRecording, setIsRecording] = useState(false);
     const [recordings, setRecordings] = useState<RecordingMetadata[]>([]);
     const [recordingId, setRecordingId] = useState<string | null>(null);
     const [samplesCount, setSamplesCount] = useState(0);
+    const [deleteEEGOnClose, setDeleteEEGOnClose] = useState(localStorage.getItem('deleteEEGOnClose') !== 'false');
 
     const subscriptionRef = useRef<Subscription | null>(null);
     const recordingIdRef = useRef<string | null>(null);
+    const bufferRef = useRef<EEGSample[]>([]);
+    const visibilityHandlerRef = useRef<(() => void) | null>(null);
 
     useEffect(() => {
-        loadRecordings();
+        const checkIncomplete = async () => {
+            const incomplete = localStorage.getItem('incompleteRecording');
+            if (incomplete) {
+                const list = await getRecordings();
+                const meta = list.find(r => r.id === incomplete);
+                if (meta && !meta.endTime) {
+                    meta.endTime = Date.now();
+                    await saveRecordingMetadata(meta);
+                }
+                localStorage.removeItem('incompleteRecording');
+            }
+        };
+
+        checkIncomplete().then(() => loadRecordings());
+
+        return () => {
+            if (recordingIdRef.current) {
+                localStorage.setItem('incompleteRecording', recordingIdRef.current);
+            }
+        };
+    }, []);
+
+    useEffect(() => {
+        const handleStorageChange = (e: StorageEvent) => {
+            if (e.key === 'deleteEEGOnClose') {
+                setDeleteEEGOnClose(e.newValue !== 'false');
+            }
+        };
+        window.addEventListener('storage', handleStorageChange);
+        return () => window.removeEventListener('storage', handleStorageChange);
     }, []);
 
     const loadRecordings = async () => {
         const list = await getRecordings();
         setRecordings(list.sort((a, b) => b.startTime - a.startTime));
+        onRecordingsChange?.(list.length);
     };
 
     const startRecording = async () => {
         if (!stream$) return;
+
+        bufferRef.current = [];
 
         const id = new Date().toISOString().replace(/[:.]/g, '-');
         const channelNames = mode === 'athena' ? athenaChannelNames : (isAuxEnabled ? museChannelNames : museChannelNames.slice(0, 4));
@@ -52,21 +88,30 @@ export function EEGRecorder({ stream$, mode, preset, isAuxEnabled, filterSetting
         setRecordingId(id);
         setSamplesCount(0);
         setIsRecording(true);
+        bufferRef.current = [];
 
-        subscriptionRef.current = stream$.pipe(
-            bufferTime(1000)
-        ).subscribe(async (samples) => {
-            if (samples.length === 0 || !recordingIdRef.current) return;
+        const handleVisibilityChange = () => {
+            if (document.hidden && recordingIdRef.current) {
+                stopRecording();
+            }
+        };
 
-            const dataPoints: EEGDataPoint[] = samples.map(s => ({
-                recordingId: recordingIdRef.current!,
-                timestamp: s.timestamp,
-                index: s.index,
-                data: s.data
-            }));
+        visibilityHandlerRef.current = handleVisibilityChange;
+        window.addEventListener('visibilitychange', handleVisibilityChange);
 
-            await addEEGDataPoints(dataPoints);
-            setSamplesCount(prev => prev + dataPoints.length);
+        subscriptionRef.current = stream$.subscribe(async (sample) => {
+            bufferRef.current.push(sample);
+            if (bufferRef.current.length >= 256) { // 1 second worth at 256Hz
+                const samples = bufferRef.current.splice(0, 256);
+                const dataPoints: EEGDataPoint[] = samples.map(s => ({
+                    recordingId: recordingIdRef.current!,
+                    timestamp: s.timestamp,
+                    index: s.index,
+                    data: s.data
+                }));
+                await addEEGDataPoints(dataPoints);
+                setSamplesCount(prev => prev + dataPoints.length);
+            }
         });
     };
 
@@ -74,6 +119,24 @@ export function EEGRecorder({ stream$, mode, preset, isAuxEnabled, filterSetting
         if (subscriptionRef.current) {
             subscriptionRef.current.unsubscribe();
             subscriptionRef.current = null;
+        }
+
+        if (visibilityHandlerRef.current) {
+            window.removeEventListener('visibilitychange', visibilityHandlerRef.current);
+            visibilityHandlerRef.current = null;
+        }
+
+        // Flush remaining buffer
+        if (bufferRef.current.length > 0 && recordingIdRef.current) {
+            const samples = bufferRef.current.splice(0);
+            const dataPoints: EEGDataPoint[] = samples.map(s => ({
+                recordingId: recordingIdRef.current!,
+                timestamp: s.timestamp,
+                index: s.index,
+                data: s.data
+            }));
+            await addEEGDataPoints(dataPoints);
+            setSamplesCount(prev => prev + dataPoints.length);
         }
 
         if (recordingIdRef.current) {
@@ -166,35 +229,28 @@ export function EEGRecorder({ stream$, mode, preset, isAuxEnabled, filterSetting
 
     return (
         <div className="glass-panel animate-fade-in" style={{ padding: '24px' }}>
-            <h2 style={{ marginTop: 0 }}>EEG Stream Recorder</h2>
+            <h2 style={{ marginTop: 0 }}>EEG Data Logger</h2>
 
             <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '24px' }}>
-                Record filtered EEG data directly to IndexedDB for long-term sessions.
-            </div>
-
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', alignItems: 'center' }}>
-                {!isRecording ? (
-                    <button className="btn btn-primary" onClick={startRecording} disabled={!stream$}>
-                        Start Recording
-                    </button>
-                ) : (
-                    <button className="btn" style={{ backgroundColor: '#ef4444', color: 'white' }} onClick={stopRecording}>
-                        Stop Recording
-                    </button>
-                )}
-
-                {isRecording && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <span className="badge" style={{ backgroundColor: '#ef4444', color: 'white', animation: 'pulse 2s infinite' }}>REC</span>
-                        <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>
-                            {samplesCount} samples recorded ({recordingId})
-                        </span>
-                    </div>
-                )}
+                Manage saved EEG recordings stored in IndexedDB.
             </div>
 
             <div style={{ marginTop: '32px' }}>
                 <h3 style={{ fontSize: '1.2rem', marginBottom: '16px' }}>Saved Recordings</h3>
+                <div style={{ marginBottom: '24px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
+                        <input
+                            type="checkbox"
+                            checked={deleteEEGOnClose}
+                            onChange={(e) => {
+                                const checked = e.target.checked;
+                                setDeleteEEGOnClose(checked);
+                                localStorage.setItem('deleteEEGOnClose', checked ? '' : 'false');
+                            }}
+                        />
+                        Delete EEG data on page unload
+                    </label>
+                </div>
                 <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
                     {recordings.length === 0 ? (
                         <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.1)', borderRadius: '8px' }}>

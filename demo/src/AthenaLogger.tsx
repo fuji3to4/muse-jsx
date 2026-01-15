@@ -17,19 +17,31 @@ type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 interface PacketLoggerProps {
     clientRef: React.MutableRefObject<MuseClient | MuseAthenaClient | null>;
     status: ConnectionStatus;
+    preset?: string;
 }
 
-export function AthenaLogger({ clientRef, status }: PacketLoggerProps) {
+export function AthenaLogger({ clientRef, status, preset }: PacketLoggerProps) {
     const [isLogging, setIsLogging] = useState(false);
     const [sessions, setSessions] = useState<PacketSessionMetadata[]>([]);
     const [capturedCount, setCapturedCount] = useState(0);
     const [recentPackets, setRecentPackets] = useState<{ timestamp: string, uuid: string, hex: string }[]>([]);
+    const [deletePacketOnClose, setDeletePacketOnClose] = useState(localStorage.getItem('deletePacketOnClose') !== 'false');
 
     const sessionIdRef = useRef<string | null>(null);
     const currentPacketsRef = useRef<{ timestamp: number, uuid: string, data: Uint8Array }[]>([]);
 
     useEffect(() => {
         loadSessions();
+    }, []);
+
+    useEffect(() => {
+        const handleStorageChange = (e: StorageEvent) => {
+            if (e.key === 'deletePacketOnClose') {
+                setDeletePacketOnClose(e.newValue !== 'false');
+            }
+        };
+        window.addEventListener('storage', handleStorageChange);
+        return () => window.removeEventListener('storage', handleStorageChange);
     }, []);
 
     const loadSessions = async () => {
@@ -49,7 +61,8 @@ export function AthenaLogger({ clientRef, status }: PacketLoggerProps) {
         savePacketSessionMetadata({
             id,
             startTime: Date.now(),
-            mode: 'athena'
+            mode: 'athena',
+            preset
         });
 
         const sub = client.rawPackets.pipe(
@@ -128,10 +141,10 @@ export function AthenaLogger({ clientRef, status }: PacketLoggerProps) {
 
     return (
         <div className="glass-panel animate-fade-in" style={{ padding: '24px' }}>
-            <h2 style={{ marginTop: 0 }}>Athena Packet Logger (DB)</h2>
+            <h2 style={{ marginTop: 0 }}>Athena Packet Logger</h2>
 
             <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '24px' }}>
-                Capture raw Bluetooth traffic to IndexedDB. Safe for long sessions.
+                Capture raw Bluetooth traffic to IndexedDB.
             </div>
 
             <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', alignItems: 'center' }}>
@@ -175,28 +188,47 @@ export function AthenaLogger({ clientRef, status }: PacketLoggerProps) {
             )}
 
             <h3 style={{ fontSize: '1.1rem', marginBottom: '16px', borderTop: '1px solid var(--panel-border)', paddingTop: '24px' }}>Saved Packet Logs</h3>
+            <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
+                    <input
+                        type="checkbox"
+                        checked={deletePacketOnClose}
+                        onChange={(e) => {
+                            const checked = e.target.checked;
+                            setDeletePacketOnClose(checked);
+                            localStorage.setItem('deletePacketOnClose', checked ? '' : 'false');
+                        }}
+                    />
+                    Delete packet logs on page unload
+                </label>
+            </div>
             <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
                 {sessions.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.1)', borderRadius: '8px' }}>
                         No logs saved.
                     </div>
                 ) : (
-                    <table style={{ width: '100%', fontSize: '0.85rem' }}>
+                    <table style={{ width: '100%' }}>
                         <thead>
                             <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--panel-border)' }}>
-                                <th style={{ padding: '8px' }}>Start Time</th>
-                                <th style={{ padding: '8px' }}>Duration</th>
-                                <th style={{ padding: '8px' }}>Actions</th>
+                                <th style={{ padding: '12px' }}>Date</th>
+                                <th style={{ padding: '12px' }}>Mode</th>
+                                <th style={{ padding: '12px' }}>Duration</th>
+                                <th style={{ padding: '12px' }}>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             {sessions.map(s => (
                                 <tr key={s.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                    <td style={{ padding: '8px' }}>{new Date(s.startTime).toLocaleString()}</td>
-                                    <td style={{ padding: '8px' }}>{s.endTime ? `${Math.round((s.endTime - s.startTime) / 1000)}s` : 'Logging...'}</td>
-                                    <td style={{ padding: '8px', display: 'flex', gap: '8px' }}>
-                                        <button className="btn btn-outline" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => downloadSession(s)}>CSV</button>
-                                        <button className="btn" style={{ padding: '2px 8px', fontSize: '0.75rem', background: 'rgba(239, 68, 68, 0.1)', color: '#f87171' }} onClick={() => handleDelete(s.id)}>Del</button>
+                                    <td style={{ padding: '12px' }}>{new Date(s.startTime).toLocaleString()}</td>
+                                    <td style={{ padding: '12px' }}>
+                                        <span className="badge" style={{ background: 'rgba(255,255,255,0.1)' }}>{s.mode}</span>
+                                        {s.preset && <span style={{ marginLeft: '4px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>{s.preset}</span>}
+                                    </td>
+                                    <td style={{ padding: '12px' }}>{s.endTime ? `${Math.round((s.endTime - s.startTime) / 1000)}s` : 'Recording...'}</td>
+                                    <td style={{ padding: '12px', display: 'flex', gap: '8px' }}>
+                                        <button className="btn btn-outline" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => downloadSession(s)}>Export CSV</button>
+                                        <button className="btn" style={{ padding: '4px 8px', fontSize: '0.8rem', background: 'rgba(239, 68, 68, 0.1)', color: '#f87171' }} onClick={() => handleDelete(s.id)}>Delete</button>
                                     </td>
                                 </tr>
                             ))}

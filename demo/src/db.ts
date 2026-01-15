@@ -22,6 +22,7 @@ export interface PacketSessionMetadata {
     startTime: number;
     endTime?: number;
     mode: string;
+    preset?: string;
 }
 
 export interface PacketDataPoint {
@@ -139,6 +140,18 @@ export async function deletePacketSession(id: string) {
         cursor = await cursor.continue();
     }
     await tx.done;
+}
+
+export async function clearEEG() {
+    const db = await initDB();
+    await db.clear(STORE_NAME);
+    await db.clear(DATA_STORE_NAME);
+}
+
+export async function clearPacket() {
+    const db = await initDB();
+    await db.clear(PACKET_SESSION_STORE);
+    await db.clear(PACKET_DATA_STORE);
 }
 
 export async function clearAll() {

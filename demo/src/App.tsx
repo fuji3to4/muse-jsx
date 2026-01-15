@@ -13,6 +13,7 @@ import { notchFilter, bandpassFilter, epoch } from '@neurosity/pipes';
 import { tap, map, BehaviorSubject, switchMap, Subscription, Observable, share } from 'rxjs';
 import { AthenaLogger } from './AthenaLogger';
 import { EEGRecorder } from './EEGRecorder';
+import { getRecordings } from './db';
 import { EEGSample } from '../../src/lib/zip-samples';
 
 // --- Types ---
@@ -369,6 +370,7 @@ export default function App() {
     const [selectedPreset, setSelectedPreset] = useState<AthenaPreset>('p1045');
     const [visibleChannels, setVisibleChannels] = useState<boolean[]>(new Array(8).fill(true));
     const [yRange, setYRange] = useState(200);
+    const [recordingsCount, setRecordingsCount] = useState(0);
 
     const switchView = (v: 'graph' | 'logger' | 'recording') => {
         setCurrentView(v);
@@ -400,6 +402,16 @@ export default function App() {
     const currentChannelNames = mode === 'athena' ? athenaChannelNames : museChannelNames;
 
     useEffect(() => {
+        getRecordings().then(list => setRecordingsCount(list.length));
+    }, []);
+
+    useEffect(() => {
+        if (currentView === 'recording') {
+            getRecordings().then(list => setRecordingsCount(list.length));
+        }
+    }, [currentView]);
+
+    useEffect(() => {
         const count = mode === 'athena' ? 8 : (enableAux ? 5 : 4);
         setVisibleChannels(new Array(8).fill(false).map((_, i) => {
             if (i >= count) return false;
@@ -407,6 +419,7 @@ export default function App() {
             return !name.includes('AUX');
         }));
     }, [mode, enableAux, currentChannelNames]);
+
 
     const toggleChannel = (idx: number) => {
         setVisibleChannels(prev => {
@@ -434,7 +447,7 @@ export default function App() {
                     className={`tab-btn ${currentView === 'recording' ? 'active' : ''}`}
                     onClick={() => switchView('recording')}
                 >
-                    EEG Data Logger
+                    EEG Data Logger {recordingsCount > 0 && <span className="badge" style={{ backgroundColor: '#10b981', color: 'white', fontSize: '0.7rem', padding: '2px 6px', borderRadius: '10px', marginLeft: '4px' }}>{recordingsCount}</span>}
                 </button>
                 <button
                     className={`tab-btn ${currentView === 'logger' ? 'active' : ''}`}
@@ -448,58 +461,60 @@ export default function App() {
             <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 300px', gap: '24px' }}>
                 <main style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                     {/* Connection Panel */}
-                    <div className="glass-panel" style={{ padding: '24px' }}>
-                        <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                            <div className="input-group">
-                                <label>Device Mode</label>
-                                <select value={mode} onChange={e => setMode(e.target.value as any)} disabled={status === 'connected'}>
-                                    <option value="athena">Athena</option>
-                                    <option value="muse" disabled={currentView === 'logger'}>Muse (Classic)</option>
-                                </select>
-                            </div>
-
-                            {mode === 'athena' && (
+                    {currentView !== 'recording' && (
+                        <div className="glass-panel" style={{ padding: '24px' }}>
+                            <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                                 <div className="input-group">
-                                    <label>Start Preset</label>
-                                    <select
-                                        value={selectedPreset}
-                                        onChange={e => setSelectedPreset(e.target.value as AthenaPreset)}
-                                        disabled={status === 'connected'}
-                                    >
-                                        {ATHENA_PRESETS.map(p => <option key={p} value={p}>{p}</option>)}
+                                    <label>Device Mode</label>
+                                    <select value={mode} onChange={e => setMode(e.target.value as any)} disabled={status === 'connected'}>
+                                        <option value="athena">Athena</option>
+                                        <option value="muse" disabled={currentView === 'logger'}>Muse (Classic)</option>
                                     </select>
                                 </div>
-                            )}
 
-                            {mode === 'muse' && (
-                                <label className="checkbox-wrapper" style={{ paddingBottom: '10px' }}>
-                                    <input type="checkbox" checked={enableAux} onChange={e => setEnableAux(e.target.checked)} disabled={status === 'connected'} />
-                                    <span>Enable Aux</span>
-                                </label>
-                            )}
+                                {mode === 'athena' && (
+                                    <div className="input-group">
+                                        <label>Start Preset</label>
+                                        <select
+                                            value={selectedPreset}
+                                            onChange={e => setSelectedPreset(e.target.value as AthenaPreset)}
+                                            disabled={status === 'connected'}
+                                        >
+                                            {ATHENA_PRESETS.map(p => <option key={p} value={p}>{p}</option>)}
+                                        </select>
+                                    </div>
+                                )}
 
-                            <button
-                                className={`btn ${status === 'connected' ? 'btn-outline' : 'btn-primary'}`}
-                                onClick={status === 'connected' ? disconnect : connect}
-                                disabled={status === 'connecting'}
-                            >
-                                {status === 'connected' ? 'Disconnect' : (status === 'connecting' ? 'Connecting...' : 'Connect Device')}
-                            </button>
-                        </div>
+                                {mode === 'muse' && (
+                                    <label className="checkbox-wrapper" style={{ paddingBottom: '10px' }}>
+                                        <input type="checkbox" checked={enableAux} onChange={e => setEnableAux(e.target.checked)} disabled={status === 'connected'} />
+                                        <span>Enable Aux</span>
+                                    </label>
+                                )}
 
-                        <div style={{ marginTop: '20px', display: 'flex', gap: '24px', fontSize: '0.9rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span style={{ color: 'var(--text-muted)' }}>Status:</span>
-                                <span className={`badge ${status === 'connected' ? 'badge-success' : 'badge-danger'}`}>
-                                    {status.toUpperCase()}
-                                </span>
+                                <button
+                                    className={`btn ${status === 'connected' ? 'btn-outline' : 'btn-primary'}`}
+                                    onClick={status === 'connected' ? disconnect : connect}
+                                    disabled={status === 'connecting'}
+                                >
+                                    {status === 'connected' ? 'Disconnect' : (status === 'connecting' ? 'Connecting...' : 'Connect Device')}
+                                </button>
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span style={{ color: 'var(--text-muted)' }}>Battery:</span>
-                                <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{battery}</span>
+
+                            <div style={{ marginTop: '20px', display: 'flex', gap: '24px', fontSize: '0.9rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{ color: 'var(--text-muted)' }}>Status:</span>
+                                    <span className={`badge ${status === 'connected' ? 'badge-success' : 'badge-danger'}`}>
+                                        {status.toUpperCase()}
+                                    </span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{ color: 'var(--text-muted)' }}>Battery:</span>
+                                    <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{battery}</span>
+                                </div>
                             </div>
                         </div>
-                    </div>
+                    )}
 
                     {currentView === 'graph' && (
                         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -515,6 +530,7 @@ export default function App() {
                                 isAuxEnabled={enableAux}
                                 filterSettings={filterSettings}
                                 minimal={true}
+                                onRecordingsChange={setRecordingsCount}
                             />
 
                             <div className="glass-panel" style={{ padding: '24px' }}>
@@ -569,6 +585,7 @@ export default function App() {
                         <AthenaLogger
                             clientRef={clientRef}
                             status={status}
+                            preset={selectedPreset}
                         />
                     )}
 
@@ -579,6 +596,7 @@ export default function App() {
                             preset={selectedPreset}
                             isAuxEnabled={enableAux}
                             filterSettings={filterSettings}
+                            onRecordingsChange={setRecordingsCount}
                         />
                     )}
                 </main>
