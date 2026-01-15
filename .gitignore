@@ -1,6 +1,7 @@
 .fusebox
 node_modules
 dist
+dist-esm
 dist-demo
 .eslintcache
 *.log

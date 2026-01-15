@@ -1,12 +1,12 @@
 # muse-jsx
 
-JavaScript Library for Muse 1, Muse 2, and Muse S EEG Headsets (using Web Bluetooth).
+JavaScript Library for Muse 2, Muse S (Classic) and Muse S (Athena) EEG Headsets (using Web Bluetooth).
 
 **Demo Page:** <https://fuji3to4.github.io/muse-jsx/>
 
 ## About this
 
-This repository is a derivative of the original [muse-js](https://github.com/urish/muse-js), modified via AI agent–assisted edits.
+This repository is a derivative of the original [muse-js](https://github.com/urish/muse-js), modified for compatibility with modern Node.js versions (20+) and RxJS (7+). Additionally, it introduces experimental support for newer Muse S units using the Athena protocol.
 
 - **Original:** <https://github.com/urish/muse-js>
 - **License:** See the included `LICENSE` (original attributions preserved).
@@ -23,7 +23,7 @@ This repository is a derivative of the original [muse-js](https://github.com/uri
 npm install git+https://github.com/fuji3to4/muse-jsx.git
 ```
 
-> **Note:** This installation method should be tested separately in your project before production use.
+> **Note:** This package supports both CommonJS (`require`) and ES modules (`import`). After installation, rebuild the package by running `npm run build` in the `muse-jsx` directory if needed.
 
 **Option 2: Clone and link locally**
 
@@ -56,7 +56,7 @@ Then open <http://localhost:4445/>
 
 ## Usage - Classic MuseClient
 
-For **Muse 1, Muse 2, and original Muse S** devices, use the classic `MuseClient`:
+For **Muse 2, Muse S (Classic)** devices, use the classic `MuseClient`:
 
 ```typescript
 import { MuseClient } from 'muse-jsx';

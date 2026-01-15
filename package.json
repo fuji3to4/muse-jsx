@@ -3,14 +3,24 @@
   "version": "0.1.0",
   "description": "Reconstructed muse-js: Muse EEG Headset JavaScript Library",
   "main": "dist/index.js",
-  "typings": "dist/index.d.ts",
+  "module": "dist-esm/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist-esm/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
   "repository": "https://github.com/fuji3to4/muse-jsx",
   "author": "Satoshi Fujiii",
   "license": "MIT",
   "scripts": {
-    "build": "npm run clean && tsc",
+    "build": "npm run clean && npm run build:cjs && npm run build:esm",
+    "build:cjs": "tsc -p tsconfig.json",
+    "build:esm": "tsc -p tsconfig.esm.json",
     "build:demo": "vite build",
-    "clean": "rimraf dist",
+    "clean": "rimraf dist dist-esm",
     "format": "prettier --write \"src/**/*.ts\" \"**/*.json\"",
     "precommit": "lint-staged",
     "prepare": "npm run build",
@@ -20,7 +30,8 @@
     "test:watch": "jest --watch"
   },
   "files": [
-    "dist"
+    "dist",
+    "dist-esm"
   ],
   "devDependencies": {
     "@neurosity/pipes": "^5.2.1",
