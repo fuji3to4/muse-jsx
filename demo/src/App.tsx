@@ -610,15 +610,15 @@ export default function App() {
                                                 id="y-axis-range"
                                                 type="range"
                                                 min="10"
-                                                max="2000"
+                                                max="3000"
                                                 step="10"
                                                 value={yRange}
                                                 onChange={e => setYRange(Number(e.target.value))}
                                                 style={{ flex: 1 }}
                                                 aria-label="Y-Axis Range slider"
-                                                title="Y-Axis Range in microvolts (10-1000 µV)"
+                                                title="Y-Axis Range in microvolts (10-3000 µV)"
                                             />
-                                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>1000</span>
+                                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>3000</span>
                                         </div>
                                     </div>
                                 </div>
