@@ -209,6 +209,8 @@ This fork does not include or document Node.js support via bleat/noble. It targe
 
 ## References
 
+This project was made possible by the following open-source projects. We are grateful for their contributions and inspiration.
+
 - [urish/muse-js](https://github.com/urish/muse-js) - Original muse-js library
 - [AbosaSzakal/MuseAthenaDataformatParser](https://github.com/AbosaSzakal/MuseAthenaDataformatParser) - Muse Athena data format parser
 - [Amused-EEG/amused-py](https://github.com/Amused-EEG/amused-py) - Python tools for Muse EEG devices
