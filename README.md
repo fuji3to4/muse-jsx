@@ -1,5 +1,9 @@
 # muse-jsx
 
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![GitHub Release](https://img.shields.io/github/v/release/fuji3to4/muse-jsx.svg)](https://github.com/fuji3to4/muse-jsx/releases)
+
+
 JavaScript Library for Muse 2, Muse S (Classic) and Muse S (Athena) EEG Headsets (using Web Bluetooth).
 
 **Demo Page:** <https://fuji3to4.github.io/muse-jsx/>

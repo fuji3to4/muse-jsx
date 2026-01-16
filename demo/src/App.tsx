@@ -391,7 +391,7 @@ export default function App() {
     const [currentView, setCurrentView] = useState<'graph' | 'logger' | 'recording'>(initialView as any);
     const [selectedPreset, setSelectedPreset] = useState<AthenaPreset>('p1045');
     const [visibleChannels, setVisibleChannels] = useState<boolean[]>(new Array(8).fill(true));
-    const [yRange, setYRange] = useState(200);
+    const [yRange, setYRange] = useState(500);
     const [recordingsCount, setRecordingsCount] = useState(0);
 
     const switchView = (v: 'graph' | 'logger' | 'recording') => {
@@ -610,7 +610,7 @@ export default function App() {
                                                 id="y-axis-range"
                                                 type="range"
                                                 min="10"
-                                                max="1000"
+                                                max="2000"
                                                 step="10"
                                                 value={yRange}
                                                 onChange={e => setYRange(Number(e.target.value))}

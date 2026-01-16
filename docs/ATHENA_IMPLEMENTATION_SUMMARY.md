@@ -10,10 +10,10 @@ Tag-based packet parser:
 - `packetParser()`: Bulk buffer processing
 
 Supported tags:
-- `0x11`/`0x12`: EEG (14-bit, 8ch×2samples, 256Hz, scale: 0.0885µV/LSB)
+- `0x12`/ (`0x11`): EEG (14-bit, 8ch×2samples, 256Hz, scale: 0.0885µV/LSB)
 - `0x47`: ACC_GYRO (16-bit, 3samples, 52Hz, ACC: 0.000061G/LSB, GYRO: 0.0074768dps/LSB)
-- `0x34`/`0x35`: OPTICAL (20-bit, 3samples×4ch, 64Hz, scale: 1/32768)
-- `0x88`: BATTERY (16-bit, 10values, 1Hz)
+- `0x34`/(`0x35`): OPTICAL (20-bit, 3samples×4ch, 64Hz, scale: 1/32768)
+- `0x88`/(`0x98`): BATTERY (16-bit, 10values, 1Hz)
 - `0x53`: DRL_REF (14-bit, 32Hz)
 
 ### `src/muse-athena.ts`

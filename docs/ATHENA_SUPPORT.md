@@ -40,7 +40,7 @@ client.batteryData.subscribe(data => {
 - `p1034`, `p1035`: Alternative configurations
 - `p21`: Basic configuration
 
-## Packet Format
+## P1045 Packet Format
 
 | Tag | Type | Samples/Packet | Freq | Bits |
 |-----|------|----------------|------|------|
