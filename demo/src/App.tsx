@@ -14,7 +14,7 @@ import { tap, map, BehaviorSubject, switchMap, Subscription, Observable, share }
 import { AthenaLogger } from './AthenaLogger';
 import { EEGRecorder } from './EEGRecorder';
 import { getRecordings } from './db';
-import { EEGSample } from '../../src/lib/zip-samples';
+import { EEGSample } from 'muse-jsx';
 
 // --- Types ---
 
