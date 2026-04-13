@@ -30,7 +30,7 @@ const ATHENA_SENSOR_CHAR_UUIDS = [
 ];
 
 export const opticalChannelNames = ['ambient', 'infrared', 'red'];
-export const channelNames = ['TP9', 'AF7', 'AF8', 'TP10', 'FPz', 'AUX_R', 'AUX_L', 'AUX'];
+export const channelNames = ['TP9', 'AF7', 'AF8', 'TP10', 'AUX_1', 'AUX_2', 'AUX_3', 'AUX_4'];
 
 export const ATHENA_COMMANDS = {
     v4: new Uint8Array([0x03, 0x76, 0x34, 0x0a]),
@@ -40,14 +40,29 @@ export const ATHENA_COMMANDS = {
     p21: new Uint8Array([0x04, 0x70, 0x32, 0x31, 0x0a]),
     p1034: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x33, 0x34, 0x0a]),
     p1035: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x33, 0x35, 0x0a]),
+    p1041: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x34, 0x31, 0x0a]),
+    p1042: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x34, 0x32, 0x0a]),
+    p1044: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x34, 0x34, 0x0a]),
     p1045: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x34, 0x35, 0x0a]),
+    p1046: new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x34, 0x36, 0x0a]),
+    p4129: new Uint8Array([0x06, 0x70, 0x34, 0x31, 0x32, 0x39, 0x0a]),
     d: new Uint8Array([0x02, 0x64, 0x0a]),
     dc001: new Uint8Array([0x06, 0x64, 0x63, 0x30, 0x30, 0x31, 0x0a]),
     L1: new Uint8Array([0x03, 0x4c, 0x31, 0x0a]),
 };
 
-export type AthenaPreset = 'p21' | 'p1034' | 'p1035' | 'p1045';
-export const ATHENA_PRESETS: AthenaPreset[] = ['p21', 'p1034', 'p1035', 'p1045'];
+export type AthenaPreset = 'p21' | 'p1034' | 'p1035' | 'p1041' | 'p1042' | 'p1044' | 'p1045' | 'p1046' | 'p4129';
+export const ATHENA_PRESETS: AthenaPreset[] = [
+    'p21',
+    'p1034',
+    'p1035',
+    'p1041',
+    'p1042',
+    'p1044',
+    'p1045',
+    'p1046',
+    'p4129',
+];
 
 export class MuseAthenaClient {
     deviceName: string | null = '';
@@ -203,8 +218,9 @@ export class MuseAthenaClient {
                                 const allSamples = entry.data;
                                 const channels = allSamples.length / samples;
                                 for (let ch = 0; ch < channels; ch++) {
-                                    // Use original slice logic for [ch0_s0, ch0_s1, ...]
-                                    const samplesArr = allSamples.slice(ch * samples, ch * samples + samples);
+                                    const samplesArr = Array.from({ length: samples }, (_, sampleIndex) => {
+                                        return allSamples[sampleIndex * channels + ch];
+                                    });
                                     observer.next({
                                         index: eventIndex,
                                         electrode: ch,
@@ -296,7 +312,7 @@ export class MuseAthenaClient {
         return this.commandLock;
     }
 
-    async start(preset: string = 'p1045') {
+    async start(preset: AthenaPreset = 'p1045') {
         console.log('[Athena] Starting sequence');
         await this.sendCommand('v4');
         await this.delay(100);

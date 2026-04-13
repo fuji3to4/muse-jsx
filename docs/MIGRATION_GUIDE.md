@@ -37,7 +37,7 @@ client.eegReadings.subscribe(reading => {
 | Target Device | Muse 2, Classic Muse S | Muse S (Athena) |
 | Packet Format | Channel-separated | Tag-based unified |
 | Streams | Per electrode | Per type |
-| Presets | `p20`, `p21`, `p50` | `p1045`, `p21`, `p1034` |
+| Presets | `p20`, `p21`, `p50` | `p1045`, `p1041`, `p21`, `p1034` |
 | Commands | `v1`, `d`, `s` | `v4`, `v6`, `dc001` |
 
 ## Athena Streams

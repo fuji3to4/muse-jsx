@@ -174,7 +174,7 @@ main();
 - Accelerometer & Gyroscope (IMU)
 - PPG / Optical Sensors
 - Battery Status
-- **Preset Selection** (e.g., `p1045`, `p21`) and **Packet Logging**
+- **Preset Selection** (e.g., `p1045`, `p1041`, `p21`) and **Packet Logging**
 
 ### Additional Resources
 

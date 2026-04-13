@@ -36,7 +36,8 @@ client.batteryData.subscribe(data => {
 
 ## Presets
 
-- `p1045`: Standard (EEG 8ch + IMU + Optical) - Recommended
+- `p1045`: Default (EEG 8ch + IMU + Optical)
+- `p1041`: Alternative configuration
 - `p1034`, `p1035`: Alternative configurations
 - `p21`: Basic configuration
 
