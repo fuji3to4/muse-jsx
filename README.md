@@ -1,6 +1,6 @@
 # muse-jsx
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18263901.svg)](https://doi.org/10.5281/zenodo.18263900)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19552611.svg)](https://doi.org/10.5281/zenodo.19552611)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/fuji3to4/muse-jsx.svg)](https://github.com/fuji3to4/muse-jsx/releases)
 
