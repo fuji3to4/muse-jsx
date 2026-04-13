@@ -146,7 +146,8 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
             }));
         } else if (client instanceof MuseAthenaClient) {
             subscriptionsRef.current.push(client.batteryData.subscribe(t => {
-                setBattery(String(t.values[0] || '?'));
+                const batteryPercent = t.values[0];
+                setBattery(Number.isFinite(batteryPercent) ? `${batteryPercent.toFixed(2)}%` : '?');
             }));
             subscriptionsRef.current.push(client.accGyroReadings.subscribe(accel => {
                 setAccelerometer({ x: accel.acc?.x || 0, y: accel.acc?.y || 0, z: accel.acc?.z || 0 });

@@ -6,7 +6,7 @@
  * - 0x12: EEG (8 channels, 2 samples, 14-bit, 256 Hz)
  * - 0x47: ACC_GYRO (3 samples, 12-bit, 52 Hz)
  * - 0x34: OPTICAL (3 samples, 20-bit, 64 Hz)
- * - 0x88: BATTERY (10 16-bit values, 1 Hz)  [firmware update: was 0x98]
+ * - 0x88: BATTERY / status packet (battery % in first 2 bytes, variable length)
  *
  * NOTE: parsePacket() expects tagIndex pointing to the tag byte at the packet header.
  * Use findTaggedPacket() from muse-athena.ts for BLE notification packets with headers.
@@ -215,14 +215,14 @@ export function parsePacket(
 
         case 0x88:
         case 0x98: {
-            // BATTERY: 20 bytes payload
-            const payloadLen = 20;
-            const endIndex = payloadStart + payloadLen;
-            if (endIndex > data.length) return [tagIndex + 1, 'BATTERY_PARTIAL', [], 1, 0];
+            // Newer Athena firmware sends a long status packet where the first 2 bytes
+            // contain state-of-charge in 1/256 percent units.
+            const endIndex = data.length;
+            if (payloadStart + 2 > endIndex) return [tagIndex + 1, 'BATTERY_PARTIAL', [], 1, 0];
 
             const block = data.subarray(payloadStart, endIndex);
-            const values = parseUintLEValues(block, 16);
-            return [endIndex, 'BATTERY', [{ type: 'BATTERY', data: values }], 1, 1];
+            const batteryPercent = (block[0] | (block[1] << 8)) / 256;
+            return [endIndex, 'BATTERY', [{ type: 'BATTERY', data: [batteryPercent] }], 1, 0.2];
         }
 
         default: {
