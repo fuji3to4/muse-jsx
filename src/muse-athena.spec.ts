@@ -5,6 +5,10 @@ import { ATHENA_PRESETS, MuseAthenaClient, channelNames } from './muse-athena';
 
 declare const global: any;
 
+function scaleCenteredEeg(value: number) {
+    return ((value - 8192) * 1450) / 16383;
+}
+
 let museDevice: DeviceMock;
 
 function charCodes(s: string) {
@@ -88,8 +92,8 @@ describe('MuseAthenaClient', () => {
         sensorCharacteristic.dispatchEvent(new CustomEvent('characteristicvaluechanged'));
 
         expect(readings).toHaveLength(8);
-        expect(readings[0].samples).toEqual([(1 * 1450) / 16383, (9 * 1450) / 16383]);
-        expect(readings[1].samples).toEqual([(2 * 1450) / 16383, (10 * 1450) / 16383]);
-        expect(readings[7].samples).toEqual([(8 * 1450) / 16383, (16 * 1450) / 16383]);
+        expect(readings[0].samples).toEqual([scaleCenteredEeg(1), scaleCenteredEeg(9)]);
+        expect(readings[1].samples).toEqual([scaleCenteredEeg(2), scaleCenteredEeg(10)]);
+        expect(readings[7].samples).toEqual([scaleCenteredEeg(8), scaleCenteredEeg(16)]);
     });
 });

@@ -19,7 +19,7 @@ function packUnsignedValues(values: number[], bitWidth: number): Uint8Array {
 }
 
 describe('parsePacket', () => {
-    it('scales Athena EEG values like OpenMuse without centering them first', () => {
+    it('scales Athena EEG values around zero using the offset-binary midpoint', () => {
         const eegValues = new Array(16).fill(8192);
         const payload = packUnsignedValues(eegValues, 14);
         const packet = new Uint8Array(1 + 4 + payload.length);
@@ -34,8 +34,8 @@ describe('parsePacket', () => {
         expect(freqHz).toBe(256);
         expect(entries).toHaveLength(1);
         expect(entries[0].data).toHaveLength(16);
-        expect(entries[0].data[0]).toBeCloseTo((8192 * 1450) / 16383, 6);
-        expect(entries[0].data[15]).toBeCloseTo((8192 * 1450) / 16383, 6);
+        expect(entries[0].data[0]).toBeCloseTo(0, 6);
+        expect(entries[0].data[15]).toBeCloseTo(0, 6);
     });
 
     it('parses 0x88 battery packets from the first two payload bytes and consumes the full payload', () => {

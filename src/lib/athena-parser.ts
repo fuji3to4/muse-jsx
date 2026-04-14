@@ -99,6 +99,7 @@ function parseUintLEValues(buf: Uint8Array, bitWidth: number): number[] {
     return out;
 }
 
+ 
 /**
  * Parse signed X-bit little-endian values from buffer
  */
@@ -109,6 +110,7 @@ function parseIntLEValues(buf: Uint8Array, bitWidth: number): number[] {
     return uints.map((v) => (v >= halfVal ? v - maxVal : v));
 }
 
+ 
 /**
  * Extract bits from bit array and convert to integer (little-endian)
  */
@@ -134,7 +136,7 @@ export function parsePacket(
     data: Uint8Array,
     tag: number,
     tagIndex: number,
-    verbose: boolean = false,
+    _verbose: boolean = false,
 ): [number, string, AthenaEntry[], number, number] {
     const payloadStart = tagIndex + 1 + 4;
 
