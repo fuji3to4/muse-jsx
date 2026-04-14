@@ -347,12 +347,19 @@ export class MuseAthenaClient {
     }
 
     async deviceInfo(): Promise<MuseDeviceInfo> {
-        const resultListener = this.controlResponses.pipe(
-            filter((r) => !!r.fw),
+        const jsonResponse$ = this.controlResponses.pipe(
+            filter((r): r is MuseDeviceInfo => typeof r.fw === 'string'),
             take(1),
         );
+
+        const textResponse$ = this.rawControlData.pipe(
+            map((value) => this.parseAthenaDeviceInfoText(value)),
+            filter((value): value is MuseDeviceInfo => value !== null),
+            take(1),
+        );
+
         await this.sendCommand('v6');
-        return firstValueFrom(resultListener) as Promise<MuseDeviceInfo>;
+        return firstValueFrom(merge(jsonResponse$, textResponse$).pipe(take(1))) as Promise<MuseDeviceInfo>;
     }
 
     async injectMarker(value: string | number, timestamp: number = new Date().getTime()) {
@@ -374,6 +381,28 @@ export class MuseAthenaClient {
 
     private delay(ms: number): Promise<void> {
         return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    private parseAthenaDeviceInfoText(raw: string): MuseDeviceInfo | null {
+        const normalized = raw.replace(/^:+/, '').trim();
+        if (!normalized) return null;
+
+        // Athena devices often answer v6 with plain text (example: "Athena_R...") instead of JSON.
+        if (!/athena|muse|version|_r/i.test(normalized)) {
+            return null;
+        }
+
+        return {
+            rc: 0,
+            ap: 'athena',
+            sp: '',
+            tp: 'consumer',
+            hw: '',
+            bn: 0,
+            fw: normalized,
+            bl: '',
+            pv: 0,
+        };
     }
 
     private getAthenaTimestamp(

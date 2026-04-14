@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LineChart, Line, YAxis, Legend, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, YAxis, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 import {
     MuseClient,
     MuseAthenaClient,
@@ -354,10 +354,11 @@ function EEGGraph({
     );
 
     return (
-        <div className="glass-panel" style={{ height: 500, width: '100%', padding: '10px' }}>
-            <ResponsiveContainer>
+        <div className="glass-panel" style={{ height: 500, width: '100%', minWidth: 0, minHeight: 320, padding: '10px' }}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320}>
                 <LineChart data={data}>
                     <YAxis domain={[-yRange, yRange]} stroke="#475569" fontSize={12} allowDataOverflow={true} />
+                    <ReferenceLine y={0} stroke="#64748b" strokeDasharray="4 4" />
                     <Legend verticalAlign="top" height={36} />
                     {visibleChannels.map((visible, idx) => (
                         visible && (

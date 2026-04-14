@@ -99,7 +99,6 @@ function parseUintLEValues(buf: Uint8Array, bitWidth: number): number[] {
     return out;
 }
 
- 
 /**
  * Parse signed X-bit little-endian values from buffer
  */
@@ -110,7 +109,6 @@ function parseIntLEValues(buf: Uint8Array, bitWidth: number): number[] {
     return uints.map((v) => (v >= halfVal ? v - maxVal : v));
 }
 
- 
 /**
  * Extract bits from bit array and convert to integer (little-endian)
  */
@@ -156,7 +154,7 @@ export function parsePacket(
             // Offset binary: 8192 (=2^14/2) is the center (0 uV)
             // MuseAthenaDataformatParser uses 1450 µV for full scale (2^14 - 1 = 16383)
             // Scaling: 1450 uV / 16383 LSB approx 0.0885
-            const scaled = values.map((v) => (v - 8192) * 0.0885);
+            const scaled = values.map((v) => (v - 8192) * (1450 / 16383));
 
             return [endIndex, 'EEG', [{ type: 'EEG', data: scaled }], 2, 256];
         }
@@ -169,7 +167,7 @@ export function parsePacket(
 
             const block = data.subarray(payloadStart, endIndex);
             const values = parseUintLEValues(block, 14);
-            const scaled = values.map((v) => (v - 8192) * 0.0885);
+            const scaled = values.map((v) => (v - 8192) * (1450 / 16383));
             return [endIndex, 'DRL_REF', [{ type: 'DRL_REF', data: scaled }], 2, 32];
         }
 

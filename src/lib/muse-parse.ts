@@ -1,20 +1,56 @@
 import { Observable } from 'rxjs';
-import { concatMap, filter, map, scan } from 'rxjs';
+import { concatMap, scan } from 'rxjs';
 
-import { AccelerometerData, GyroscopeData, TelemetryData } from './muse-interfaces';
+import { AccelerometerData, GyroscopeData, MuseControlResponse, TelemetryData } from './muse-interfaces';
 
-export function parseControl(controlData: Observable<string>) {
+function isMuseControlResponse(value: unknown): value is MuseControlResponse {
+    if (!value || typeof value !== 'object') return false;
+    const rc = (value as { rc?: unknown }).rc;
+    return typeof rc === 'number';
+}
+
+export function parseControl(controlData: Observable<string>): Observable<MuseControlResponse> {
     return controlData.pipe(
-        concatMap((data) => data.split('')),
-        scan((acc, value) => {
-            if (acc.indexOf('}') >= 0) {
-                return value;
-            } else {
-                return acc + value;
-            }
-        }, ''),
-        filter((value) => value.indexOf('}') >= 0),
-        map((value) => JSON.parse(value)),
+        scan(
+            (state, chunk) => {
+                let buffer = state.buffer + chunk;
+                const parsed: MuseControlResponse[] = [];
+
+                while (true) {
+                    const start = buffer.indexOf('{');
+                    if (start < 0) {
+                        // Keep only a short tail to avoid unbounded growth on non-JSON control text.
+                        buffer = buffer.slice(-256);
+                        break;
+                    }
+
+                    if (start > 0) {
+                        buffer = buffer.slice(start);
+                    }
+
+                    const end = buffer.indexOf('}');
+                    if (end < 0) {
+                        break;
+                    }
+
+                    const candidate = buffer.slice(0, end + 1);
+                    buffer = buffer.slice(end + 1);
+
+                    try {
+                        const parsedCandidate: unknown = JSON.parse(candidate);
+                        if (isMuseControlResponse(parsedCandidate)) {
+                            parsed.push(parsedCandidate);
+                        }
+                    } catch {
+                        // Ignore malformed frames and continue scanning.
+                    }
+                }
+
+                return { buffer, parsed };
+            },
+            { buffer: '', parsed: [] as MuseControlResponse[] },
+        ),
+        concatMap((state) => state.parsed),
     );
 }
 

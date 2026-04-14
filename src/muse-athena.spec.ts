@@ -6,7 +6,7 @@ import { ATHENA_PRESETS, MuseAthenaClient, channelNames } from './muse-athena';
 declare const global: any;
 
 function scaleCenteredEeg(value: number) {
-    return (value - 8192) * 0.0885;
+    return (value - 8192) * (1450 / 16383);
 }
 
 let museDevice: DeviceMock;
