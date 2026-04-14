@@ -150,7 +150,11 @@ export function parsePacket(
             const block = data.subarray(payloadStart, endIndex);
             const values = parseUintLEValues(block, 14);
             // Align Athena EEG scaling with OpenMuse / MuseAthenaDataformatParser.
-            const scaled = values.map((v) => (v * 1450) / 16383);
+            // Scale 14-bit values to microvolts and center at 0
+            // Offset binary: 8192 (=2^14/2) is the center (0 uV)
+            // MuseAthenaDataformatParser uses 1450 µV for full scale (2^14 - 1 = 16383)
+            // Scaling: 1450 uV / 16383 LSB approx 0.0885
+            const scaled = values.map((v) => (v - 8192) * 0.0885);
 
             return [endIndex, 'EEG', [{ type: 'EEG', data: scaled }], 2, 256];
         }
