@@ -6,7 +6,7 @@ import { ATHENA_PRESETS, MuseAthenaClient, channelNames } from './muse-athena';
 declare const global: any;
 
 function scaleCenteredEeg(value: number) {
-    return ((value - 8192) * 1450) / 16383;
+    return (value - 8192) * 0.0885;
 }
 
 let museDevice: DeviceMock;
@@ -50,8 +50,8 @@ describe('MuseAthenaClient', () => {
         expect(channelNames).toEqual(['TP9', 'AF7', 'AF8', 'TP10', 'AUX_1', 'AUX_2', 'AUX_3', 'AUX_4']);
     });
 
-    it('includes p1041 in the supported preset list', () => {
-        expect(ATHENA_PRESETS).toContain('p1041');
+    it('includes p1045 in the supported preset list', () => {
+        expect(ATHENA_PRESETS).toContain('p1045');
     });
 
     it('uses p1045 as the default Athena preset', async () => {
