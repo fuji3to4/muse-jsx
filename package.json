@@ -81,7 +81,13 @@
         {
           "tsconfig": {
             "rootDir": ".",
-            "outDir": "dist-test"
+            "outDir": "dist-test",
+            "baseUrl": ".",
+            "paths": {
+              "muse-jsx": [
+                "src/index.ts"
+              ]
+            }
           }
         }
       ]
