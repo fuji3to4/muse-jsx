@@ -64,11 +64,11 @@ describe('MuseAthenaClient', () => {
             await client.connect();
             await client.start();
 
-            const expected = ATHENA_COMMANDS.p1045;
+            const expected = new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x34, 0x35, 0x0a]);
             const calledWith = ((controlCharacteristic as any).writeValueWithoutResponse as jest.Mock).mock.calls.some(
                 (c: any[]) => {
                     const arg = c[0] as Uint8Array;
-                    if (!arg || !expected) return false;
+                    if (!arg) return false;
                     if (arg.length !== expected.length) return false;
                     for (let i = 0; i < arg.length; i++) if ((arg as any)[i] !== (expected as any)[i]) return false;
                     return true;
@@ -97,7 +97,7 @@ describe('MuseAthenaClient', () => {
 
         const readings: Array<{ index: number; electrode: number; samples: number[] }> = [];
         client.eegReadings.subscribe((r) =>
-            readings.push({ index: r.index, electrode: (r as any).electrode, samples: r.samples }),
+            readings.push({ index: r.index, electrode: r.electrode, samples: r.samples }),
         );
 
         sensorCharacteristic.value = new DataView(packet.buffer);
@@ -155,5 +155,15 @@ describe('MuseAthenaClient', () => {
         expect(readings).toHaveLength(2);
         expect(readings[0].samples).toHaveLength(8);
         expect(readings[1].samples).toHaveLength(8);
+
+        const OPTICS_SCALE = 1 / 32768;
+        // First reading should contain values 1..8 scaled
+        for (let i = 0; i < 8; i++) {
+            expect(readings[0].samples[i]).toBeCloseTo((i + 1) * OPTICS_SCALE, 8);
+        }
+        // Second reading should contain values 9..16 scaled
+        for (let i = 0; i < 8; i++) {
+            expect(readings[1].samples[i]).toBeCloseTo((i + 9) * OPTICS_SCALE, 8);
+        }
     });
 });
