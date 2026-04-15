@@ -40,6 +40,7 @@ describe('graph model', () => {
             'LO_IR',
             'RO_IR',
         ]);
+        expect(deriveOpticalChannelNames(2, ['LO_NIR', 'RO_NIR', 'LO_IR', 'RO_IR'])).toEqual(['LO_NIR', 'RO_NIR']);
         expect(deriveOpticalChannelNames(0, ['LO_NIR'])).toEqual([]);
     });
 });

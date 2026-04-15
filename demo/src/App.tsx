@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { LineChart, Line, YAxis, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 import {
     MuseClient,
@@ -468,9 +468,12 @@ export default function App() {
 
 
     const currentChannelNames = mode === 'athena' ? athenaChannelNames : museChannelNames;
-    const opticalChannelNames = deriveOpticalChannelNames(
-        opticalChannelCount,
-        selectOpticsChannels(opticalChannelCount),
+    const opticalChannelNames = useMemo(
+        () => deriveOpticalChannelNames(
+            opticalChannelCount,
+            selectOpticsChannels(opticalChannelCount),
+        ),
+        [opticalChannelCount],
     );
 
     useEffect(() => {
@@ -494,7 +497,7 @@ export default function App() {
 
     useEffect(() => {
         setVisibleOpticalChannels(buildVisibleChannels(opticalChannelNames));
-    }, [opticalChannelCount]);
+    }, [opticalChannelNames]);
 
 
     const toggleChannel = (idx: number) => {
