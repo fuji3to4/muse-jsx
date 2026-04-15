@@ -20,6 +20,8 @@ import { parseControl } from './lib/muse-parse';
 import { decodeResponse, observableCharacteristic } from './lib/muse-utils';
 import { parsePacket } from './lib/athena-parser';
 
+export { channelNames, opticalChannelNames } from './lib/athena-parser';
+
 export const MUSE_SERVICE = 0xfe8d;
 
 // Athena BLE UUIDs
@@ -28,9 +30,6 @@ const ATHENA_SENSOR_CHAR_UUIDS = [
     '273e0013-4c4d-454d-96be-f03bac821358', // UNIVERSAL / combined sensors
     '273e0003-4c4d-454d-96be-f03bac821358', // EEG TP9 (fallback)
 ];
-
-export const opticalChannelNames = ['ambient', 'infrared', 'red'];
-export const channelNames = ['TP9', 'AF7', 'AF8', 'TP10', 'AUX_1', 'AUX_2', 'AUX_3', 'AUX_4'];
 
 export const ATHENA_COMMANDS = {
     v4: new Uint8Array([0x03, 0x76, 0x34, 0x0a]),

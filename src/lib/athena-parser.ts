@@ -3,10 +3,15 @@
  * Based on athena_packet_decoder.py protocol
  *
  * Tag-based packet types:
+ * - 0x11: EEG (4 channels, 4 samples, 14-bit, 256 Hz)
  * - 0x12: EEG (8 channels, 2 samples, 14-bit, 256 Hz)
- * - 0x47: ACC_GYRO (3 samples, 12-bit, 52 Hz)
- * - 0x34: OPTICAL (3 samples, 20-bit, 64 Hz)
+ * - 0x34: OPTICAL (4ch, 3 samples, 20-bit, 64 Hz)
+ * - 0x35: OPTICAL (8ch, 2 samples, 20-bit, 64 Hz)
+ * - 0x36: OPTICAL (16ch, 1 sample, 20-bit, 64 Hz)
+ * - 0x47: ACC_GYRO (3 samples, 16-bit, 52 Hz)
+ * - 0x53: DRL/REF (24-byte payload, 32 Hz)
  * - 0x88: BATTERY / status packet (battery % in first 2 bytes, variable length)
+ * - 0x98: BATTERY (old firmware, 20-byte payload, 1 Hz)
  *
  * NOTE: parsePacket() expects tagIndex pointing to the tag byte at the packet header.
  * Use findTaggedPacket() from muse-athena.ts for BLE notification packets with headers.
@@ -57,6 +62,67 @@ export interface AthenaParsedPacket {
     freqHz: number;
     entries: AthenaEntry[];
 }
+
+interface AthenaSensorConfig {
+    type: string;
+    nChannels: number;
+    nSamples: number;
+    rate: number;
+    dataLen: number;
+}
+
+const EEG_SCALE = 1450 / 16383;
+const ACC_SCALE = 0.0000610352;
+const GYRO_SCALE = -0.0074768;
+const OPTICS_SCALE = 1 / 32768;
+
+export const channelNames = ['TP9', 'AF7', 'AF8', 'TP10', 'AUX_1', 'AUX_2', 'AUX_3', 'AUX_4'] as const;
+export const opticalChannelNames = ['ambient', 'infrared', 'red'] as const;
+export const ACCGYRO_CHANNELS = ['ACC_X', 'ACC_Y', 'ACC_Z', 'GYRO_X', 'GYRO_Y', 'GYRO_Z'] as const;
+export const OPTICS_CHANNELS = [
+    'LO_NIR',
+    'RO_NIR',
+    'LO_IR',
+    'RO_IR',
+    'LI_NIR',
+    'RI_NIR',
+    'LI_IR',
+    'RI_IR',
+    'LO_RED',
+    'RO_RED',
+    'LO_AMB',
+    'RO_AMB',
+    'LI_RED',
+    'RI_RED',
+    'LI_AMB',
+    'RI_AMB',
+] as const;
+
+const OPTICS_INDEXES: Record<number, readonly number[]> = {
+    4: [4, 5, 6, 7],
+    8: [0, 1, 2, 3, 4, 5, 6, 7],
+    16: Array.from({ length: 16 }, (_, index) => index),
+};
+
+export function selectOpticsChannels(count: number): string[] {
+    const indices = OPTICS_INDEXES[count];
+    if (!indices) {
+        return Array.from({ length: count }, (_, index) => `OPTICS_${index + 1}`);
+    }
+    return indices.map((index) => OPTICS_CHANNELS[index]);
+}
+
+const SENSOR_CONFIG: Record<number, AthenaSensorConfig> = {
+    0x11: { type: 'EEG', nChannels: 4, nSamples: 4, rate: 256, dataLen: 28 },
+    0x12: { type: 'EEG', nChannels: 8, nSamples: 2, rate: 256, dataLen: 28 },
+    0x34: { type: 'OPTICAL', nChannels: 4, nSamples: 3, rate: 64, dataLen: 30 },
+    0x35: { type: 'OPTICAL', nChannels: 8, nSamples: 2, rate: 64, dataLen: 40 },
+    0x36: { type: 'OPTICAL', nChannels: 16, nSamples: 1, rate: 64, dataLen: 40 },
+    0x47: { type: 'ACC_GYRO', nChannels: 6, nSamples: 3, rate: 52, dataLen: 36 },
+    0x53: { type: 'DRL_REF', nChannels: 0, nSamples: 2, rate: 32, dataLen: 24 },
+    0x88: { type: 'BATTERY', nChannels: 1, nSamples: 1, rate: 0.2, dataLen: 188 },
+    0x98: { type: 'BATTERY', nChannels: 1, nSamples: 1, rate: 1, dataLen: 20 },
+};
 
 /**
  * Convert bytes to bit array (LSB-first per byte)
@@ -137,13 +203,12 @@ export function parsePacket(
     _verbose: boolean = false,
 ): [number, string, AthenaEntry[], number, number] {
     const payloadStart = tagIndex + 1 + 4;
+    const sensor = SENSOR_CONFIG[tag];
 
     switch (tag) {
         case 0x11:
         case 0x12: {
-            // EEG (4ch/8ch): 8 channels x 2 samples (interleaved or padded), 14-bit
-            // Even 4ch seems to use 33-byte blocks in p21 logs
-            const payloadLen = 28;
+            const payloadLen = sensor.dataLen;
             const endIndex = payloadStart + payloadLen;
             if (endIndex > data.length) return [tagIndex + 1, 'EEG_PARTIAL', [], 1, 0];
 
@@ -154,26 +219,24 @@ export function parsePacket(
             // Offset binary: 8192 (=2^14/2) is the center (0 uV)
             // MuseAthenaDataformatParser uses 1450 µV for full scale (2^14 - 1 = 16383)
             // Scaling: 1450 uV / 16383 LSB approx 0.0885
-            const scaled = values.map((v) => (v - 8192) * (1450 / 16383));
+            const scaled = values.map((v) => (v - 8192) * EEG_SCALE);
 
-            return [endIndex, 'EEG', [{ type: 'EEG', data: scaled }], 2, 256];
+            return [endIndex, sensor.type, [{ type: sensor.type, data: scaled }], sensor.nSamples, sensor.rate];
         }
 
         case 0x53: {
-            // DRL/REF
-            const payloadLen = 7;
+            const payloadLen = sensor.dataLen;
             const endIndex = payloadStart + payloadLen;
             if (endIndex > data.length) return [tagIndex + 1, 'DRL_REF_PARTIAL', [], 1, 0];
 
             const block = data.subarray(payloadStart, endIndex);
             const values = parseUintLEValues(block, 14);
-            const scaled = values.map((v) => (v - 8192) * (1450 / 16383));
-            return [endIndex, 'DRL_REF', [{ type: 'DRL_REF', data: scaled }], 2, 32];
+            const scaled = values.map((v) => (v - 8192) * EEG_SCALE);
+            return [endIndex, sensor.type, [{ type: sensor.type, data: scaled }], sensor.nSamples, sensor.rate];
         }
 
         case 0x47: {
-            // IMU: 3 samples x (ACC[3] + GYRO[3]), 16-bit (verified via alignment)
-            const payloadLen = 36;
+            const payloadLen = sensor.dataLen;
             const endIndex = payloadStart + payloadLen;
             if (endIndex > data.length) return [tagIndex + 1, 'ACC_GYRO_PARTIAL', [], 1, 0];
 
@@ -187,34 +250,61 @@ export function parsePacket(
             const entries: AthenaEntry[] = [];
             for (let i = 0; i < 3; i++) {
                 const base = i * 6;
-                // Following amused-py IMU scaling (MuseAthenaDataformatParser uses this scaling)
-                // ACCEL_SCALE = 2.0 / 32768(=2^15)  (±2G range) ≈ 0.000061 G per LSB
-                // GYRO_SCALE = 250.0 / 32768(=2^15) (±250 dps range) ≈ 0.00763 dps per LSB
-                const accScaled = vals.slice(base, base + 3).map((x) => x * 0.0000610352);
-                const gyroScaled = vals.slice(base + 3, base + 6).map((x) => x * -0.0074768);
+                const accScaled = vals.slice(base, base + 3).map((x) => x * ACC_SCALE);
+                const gyroScaled = vals.slice(base + 3, base + 6).map((x) => x * GYRO_SCALE);
                 entries.push({ type: 'ACC', data: accScaled });
                 entries.push({ type: 'GYRO', data: gyroScaled });
             }
 
-            return [endIndex, 'ACC_GYRO', entries, 3, 52];
+            return [endIndex, sensor.type, entries, sensor.nSamples, sensor.rate];
         }
 
-        case 0x34:
-        case 0x35: {
-            // OPTICAL: 3 samples x 4ch x 20-bit
-            const payloadLen = 30;
+        case 0x34: {
+            const payloadLen = sensor.dataLen;
             const endIndex = payloadStart + payloadLen;
             if (endIndex > data.length) return [tagIndex + 1, 'OPTICAL_PARTIAL', [], 1, 0];
 
             const block = data.subarray(payloadStart, endIndex);
             const values = parseUintLEValues(block, 20);
             const entries: AthenaEntry[] = [];
-            for (let s = 0; s < 3; s++) {
-                const scaled = values.slice(s * 4, (s + 1) * 4).map((x) => x / 32768);
+            for (let s = 0; s < sensor.nSamples; s++) {
+                const scaled = values
+                    .slice(s * sensor.nChannels, (s + 1) * sensor.nChannels)
+                    .map((x) => x * OPTICS_SCALE);
                 entries.push({ type: 'OPTICAL', data: scaled });
             }
 
-            return [endIndex, 'OPTICAL', entries, 3, 64];
+            return [endIndex, sensor.type, entries, sensor.nSamples, sensor.rate];
+        }
+
+        case 0x35: {
+            const payloadLen = sensor.dataLen;
+            const endIndex = payloadStart + payloadLen;
+            if (endIndex > data.length) return [tagIndex + 1, 'OPTICAL_PARTIAL', [], 1, 0];
+
+            const block = data.subarray(payloadStart, endIndex);
+            const values = parseUintLEValues(block, 20);
+            const entries: AthenaEntry[] = [];
+            for (let s = 0; s < sensor.nSamples; s++) {
+                const scaled = values
+                    .slice(s * sensor.nChannels, (s + 1) * sensor.nChannels)
+                    .map((x) => x * OPTICS_SCALE);
+                entries.push({ type: 'OPTICAL', data: scaled });
+            }
+
+            return [endIndex, sensor.type, entries, sensor.nSamples, sensor.rate];
+        }
+
+        case 0x36: {
+            const payloadLen = sensor.dataLen;
+            const endIndex = payloadStart + payloadLen;
+            if (endIndex > data.length) return [tagIndex + 1, 'OPTICAL_PARTIAL', [], 1, 0];
+
+            const block = data.subarray(payloadStart, endIndex);
+            const values = parseUintLEValues(block, 20);
+            const scaled = values.slice(0, sensor.nChannels).map((x) => x * OPTICS_SCALE);
+
+            return [endIndex, sensor.type, [{ type: sensor.type, data: scaled }], sensor.nSamples, sensor.rate];
         }
 
         case 0x88:
@@ -226,7 +316,13 @@ export function parsePacket(
 
             const block = data.subarray(payloadStart, endIndex);
             const batteryPercent = (block[0] | (block[1] << 8)) / 256;
-            return [endIndex, 'BATTERY', [{ type: 'BATTERY', data: [batteryPercent] }], 1, 0.2];
+            return [
+                endIndex,
+                sensor.type,
+                [{ type: sensor.type, data: [batteryPercent] }],
+                sensor.nSamples,
+                sensor.rate,
+            ];
         }
 
         default: {
