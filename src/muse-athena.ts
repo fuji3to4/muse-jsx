@@ -20,7 +20,7 @@ import { parseControl } from './lib/muse-parse';
 import { decodeResponse, observableCharacteristic } from './lib/muse-utils';
 import { parsePacket } from './lib/athena-parser';
 
-export { channelNames, opticalChannelNames } from './lib/athena-parser';
+export { channelNames, opticalChannelNames, selectOpticsChannels } from './lib/athena-parser';
 
 export const MUSE_SERVICE = 0xfe8d;
 

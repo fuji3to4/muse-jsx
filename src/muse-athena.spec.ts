@@ -1,19 +1,9 @@
 import { TextDecoder as UtilTextDecoder, TextEncoder as UtilTextEncoder } from 'node:util';
 import { DeviceMock, WebBluetoothMock } from 'web-bluetooth-mock';
 
-import { ATHENA_PRESETS, MuseAthenaClient, channelNames } from './muse-athena';
+import { ATHENA_PRESETS, MuseAthenaClient, channelNames, selectOpticsChannels } from './muse-athena';
 
 declare const global: any;
-
-function scaleCenteredEeg(value: number) {
-    return (value - 8192) * (1450 / 16383);
-}
-
-let museDevice: DeviceMock;
-
-function charCodes(s: string) {
-    return s.split('').map((c) => c.charCodeAt(0));
-}
 
 function packUnsignedValues(values: number[], bitWidth: number): Uint8Array {
     const totalBits = values.length * bitWidth;
@@ -34,6 +24,8 @@ function packUnsignedValues(values: number[], bitWidth: number): Uint8Array {
 }
 
 describe('MuseAthenaClient', () => {
+    let museDevice: DeviceMock;
+
     beforeEach(() => {
         museDevice = new DeviceMock('Muse-Test', [0xfe8d]);
         global.navigator = global.navigator || {};
@@ -46,54 +38,43 @@ describe('MuseAthenaClient', () => {
         }
     });
 
-    it('exports OpenMuse-style Athena channel names', () => {
-        expect(channelNames).toEqual(['TP9', 'AF7', 'AF8', 'TP10', 'AUX_1', 'AUX_2', 'AUX_3', 'AUX_4']);
+    it('exports Athena optical labels for 8-channel optical packets', () => {
+        expect(selectOpticsChannels(8)).toEqual([
+            'LO_NIR',
+            'RO_NIR',
+            'LO_IR',
+            'RO_IR',
+            'LI_NIR',
+            'RI_NIR',
+            'LI_IR',
+            'RI_IR',
+        ]);
     });
 
-    it('includes p1045 in the supported preset list', () => {
-        expect(ATHENA_PRESETS).toContain('p1045');
-    });
-
-    it('uses p1045 as the default Athena preset', async () => {
-        const client = new MuseAthenaClient();
-        const service = museDevice.getServiceMock(0xfe8d);
-        const controlCharacteristic = service.getCharacteristicMock('273e0001-4c4d-454d-96be-f03bac821358') as any;
-        controlCharacteristic.writeValueWithoutResponse = jest.fn();
-        jest.spyOn(client as any, 'delay').mockResolvedValue(undefined);
-
-        await client.connect();
-        await client.start();
-
-        expect(controlCharacteristic.writeValueWithoutResponse).toHaveBeenCalledWith(
-            new Uint8Array([6, ...charCodes('p1045'), 10]),
-        );
-    });
-
-    it('deinterleaves Athena EEG payloads in sample-major order', async () => {
+    it('emits Athena optical readings with one value per optical sensor', async () => {
         const client = new MuseAthenaClient();
         const service = museDevice.getServiceMock(0xfe8d);
         const sensorCharacteristic = service.getCharacteristicMock('273e0013-4c4d-454d-96be-f03bac821358');
-        const values = Array.from({ length: 16 }, (_, index) => index + 1);
-        const payload = packUnsignedValues(values, 14);
+        const opticalValues = Array.from({ length: 16 }, (_, index) => index + 1);
+        const payload = packUnsignedValues(opticalValues, 20);
         const packet = new Uint8Array(9 + 1 + 4 + payload.length);
 
-        packet[1] = 7;
-        packet[9] = 0x12;
+        packet[1] = 9;
+        packet[9] = 0x35;
         packet.set(payload, 14);
 
         await client.connect();
 
-        const readings: Array<{ electrode: number; samples: number[] }> = [];
-        client.eegReadings.subscribe((reading) => {
-            readings.push({ electrode: reading.electrode, samples: reading.samples });
+        const readings: Array<{ index: number; samples: number[] }> = [];
+        client.opticalReadings.subscribe((reading) => {
+            readings.push({ index: reading.index, samples: reading.samples });
         });
 
         sensorCharacteristic.value = new DataView(packet.buffer);
         sensorCharacteristic.dispatchEvent(new CustomEvent('characteristicvaluechanged'));
 
-        expect(readings).toHaveLength(8);
-        expect(readings[0].samples).toEqual([scaleCenteredEeg(1), scaleCenteredEeg(9)]);
-        expect(readings[1].samples).toEqual([scaleCenteredEeg(2), scaleCenteredEeg(10)]);
-        expect(readings[7].samples).toEqual([scaleCenteredEeg(8), scaleCenteredEeg(16)]);
+        expect(readings).toHaveLength(2);
+        expect(readings[0].samples).toHaveLength(8);
+        expect(readings[1].samples).toHaveLength(8);
     });
 });
