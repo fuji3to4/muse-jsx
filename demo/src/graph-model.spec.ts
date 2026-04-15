@@ -1,6 +1,6 @@
 import type { AthenaOpticalReading } from 'muse-jsx';
 
-import { appendOpticalReading, buildVisibleChannels } from './graph-model';
+import { appendOpticalReading, buildVisibleChannels, deriveOpticalChannelNames } from './graph-model';
 import type { GraphPoint } from './graph-model';
 
 describe('graph model', () => {
@@ -31,5 +31,15 @@ describe('graph model', () => {
 
     it('defaults channel visibility to true', () => {
         expect(buildVisibleChannels(['LO_NIR', 'RO_NIR', 'LI_IR'])).toEqual([true, true, true]);
+    });
+
+    it('derives library-backed optical labels from the current sample width', () => {
+        expect(deriveOpticalChannelNames(4, ['LO_NIR', 'RO_NIR', 'LO_IR', 'RO_IR'])).toEqual([
+            'LO_NIR',
+            'RO_NIR',
+            'LO_IR',
+            'RO_IR',
+        ]);
+        expect(deriveOpticalChannelNames(0, ['LO_NIR'])).toEqual([]);
     });
 });

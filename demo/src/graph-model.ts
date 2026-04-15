@@ -26,3 +26,7 @@ export function appendOpticalReading(
 export function buildVisibleChannels(channelNames: readonly string[]): boolean[] {
     return channelNames.map(() => true);
 }
+
+export function deriveOpticalChannelNames(channelCount: number, labels: readonly string[]): string[] {
+    return labels.slice(0, channelCount);
+}
