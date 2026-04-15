@@ -53,26 +53,29 @@ describe('MuseAthenaClient', () => {
             .spyOn(MuseAthenaClient.prototype as any, 'delay')
             .mockImplementation(() => Promise.resolve());
 
-        await client.connect();
-        const controlChar = (client as any).controlChar;
-        const writeSpy = jest
-            .spyOn(controlChar as any, 'writeValueWithoutResponse')
-            .mockImplementation(() => Promise.resolve());
+        // Use the service/characteristic mock directly (web-bluetooth-mock) instead of spying on
+        // the characteristic returned by the connected client instance.
+        const service = museDevice.getServiceMock(0xfe8d);
+        const controlCharacteristic = service.getCharacteristicMock('273e0001-4c4d-454d-96be-f03bac821358');
+        // Ensure the mock exposes the writeValueWithoutResponse method so we can assert calls.
+        (controlCharacteristic as any).writeValueWithoutResponse = jest.fn().mockResolvedValue(undefined);
 
         try {
+            await client.connect();
             await client.start();
 
-            const calledWith = writeSpy.mock.calls.some((c: any[]) => {
-                const arg = c[0] as Uint8Array;
-                const expected = ATHENA_COMMANDS.p1045;
-                if (!arg || !expected) return false;
-                if (arg.length !== expected.length) return false;
-                for (let i = 0; i < arg.length; i++) if ((arg as any)[i] !== (expected as any)[i]) return false;
-                return true;
-            });
+            const expected = ATHENA_COMMANDS.p1045;
+            const calledWith = ((controlCharacteristic as any).writeValueWithoutResponse as jest.Mock).mock.calls.some(
+                (c: any[]) => {
+                    const arg = c[0] as Uint8Array;
+                    if (!arg || !expected) return false;
+                    if (arg.length !== expected.length) return false;
+                    for (let i = 0; i < arg.length; i++) if ((arg as any)[i] !== (expected as any)[i]) return false;
+                    return true;
+                },
+            );
             expect(calledWith).toBe(true);
         } finally {
-            writeSpy.mockRestore();
             delaySpy.mockRestore();
         }
     });
