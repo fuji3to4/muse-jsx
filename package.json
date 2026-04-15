@@ -73,7 +73,15 @@
       "js"
     ],
     "transform": {
-      "^.+\\.ts$": "ts-jest"
+      "^.+\\.ts$": [
+        "ts-jest",
+        {
+          "tsconfig": {
+            "rootDir": ".",
+            "outDir": "dist-test"
+          }
+        }
+      ]
     },
     "testMatch": [
       "**/*.spec.ts"
