@@ -1,19 +1,9 @@
 import { TextDecoder as UtilTextDecoder, TextEncoder as UtilTextEncoder } from 'node:util';
 import { DeviceMock, WebBluetoothMock } from 'web-bluetooth-mock';
 
-import { ATHENA_PRESETS, MuseAthenaClient, channelNames } from './muse-athena';
+import { ATHENA_PRESETS, MuseAthenaClient, channelNames, selectOpticsChannels } from './muse-athena';
 
 declare const global: any;
-
-function scaleCenteredEeg(value: number) {
-    return (value - 8192) * (1450 / 16383);
-}
-
-let museDevice: DeviceMock;
-
-function charCodes(s: string) {
-    return s.split('').map((c) => c.charCodeAt(0));
-}
 
 function packUnsignedValues(values: number[], bitWidth: number): Uint8Array {
     const totalBits = values.length * bitWidth;
@@ -34,6 +24,8 @@ function packUnsignedValues(values: number[], bitWidth: number): Uint8Array {
 }
 
 describe('MuseAthenaClient', () => {
+    let museDevice: DeviceMock;
+
     beforeEach(() => {
         museDevice = new DeviceMock('Muse-Test', [0xfe8d]);
         global.navigator = global.navigator || {};
@@ -46,54 +38,132 @@ describe('MuseAthenaClient', () => {
         }
     });
 
-    it('exports OpenMuse-style Athena channel names', () => {
+    it('exports channel names for EEG electrodes', () => {
         expect(channelNames).toEqual(['TP9', 'AF7', 'AF8', 'TP10', 'AUX_1', 'AUX_2', 'AUX_3', 'AUX_4']);
     });
 
-    it('includes p1045 in the supported preset list', () => {
+    it('exports ATHENA_PRESETS and includes default preset', () => {
+        expect(Array.isArray(ATHENA_PRESETS)).toBe(true);
         expect(ATHENA_PRESETS).toContain('p1045');
     });
 
-    it('uses p1045 as the default Athena preset', async () => {
+    it('uses default preset when starting', async () => {
         const client = new MuseAthenaClient();
+        const delaySpy = jest
+            .spyOn(MuseAthenaClient.prototype as any, 'delay')
+            .mockImplementation(() => Promise.resolve());
+
+        // Use the service/characteristic mock directly (web-bluetooth-mock) instead of spying on
+        // the characteristic returned by the connected client instance.
         const service = museDevice.getServiceMock(0xfe8d);
-        const controlCharacteristic = service.getCharacteristicMock('273e0001-4c4d-454d-96be-f03bac821358') as any;
-        controlCharacteristic.writeValueWithoutResponse = jest.fn();
-        jest.spyOn(client as any, 'delay').mockResolvedValue(undefined);
+        const controlCharacteristic = service.getCharacteristicMock('273e0001-4c4d-454d-96be-f03bac821358');
+        // Ensure the mock exposes the writeValueWithoutResponse method so we can assert calls.
+        (controlCharacteristic as any).writeValueWithoutResponse = jest.fn().mockResolvedValue(undefined);
 
-        await client.connect();
-        await client.start();
+        try {
+            await client.connect();
+            await client.start();
 
-        expect(controlCharacteristic.writeValueWithoutResponse).toHaveBeenCalledWith(
-            new Uint8Array([6, ...charCodes('p1045'), 10]),
-        );
+            const expected = new Uint8Array([0x06, 0x70, 0x31, 0x30, 0x34, 0x35, 0x0a]);
+            const calledWith = ((controlCharacteristic as any).writeValueWithoutResponse as jest.Mock).mock.calls.some(
+                (c: any[]) => {
+                    const arg = c[0] as Uint8Array;
+                    if (!arg) return false;
+                    if (arg.length !== expected.length) return false;
+                    for (let i = 0; i < arg.length; i++) if ((arg as any)[i] !== (expected as any)[i]) return false;
+                    return true;
+                },
+            );
+            expect(calledWith).toBe(true);
+        } finally {
+            delaySpy.mockRestore();
+        }
     });
 
-    it('deinterleaves Athena EEG payloads in sample-major order', async () => {
+    it('deinterleaves EEG samples into channel readings', async () => {
         const client = new MuseAthenaClient();
         const service = museDevice.getServiceMock(0xfe8d);
         const sensorCharacteristic = service.getCharacteristicMock('273e0013-4c4d-454d-96be-f03bac821358');
-        const values = Array.from({ length: 16 }, (_, index) => index + 1);
-        const payload = packUnsignedValues(values, 14);
-        const packet = new Uint8Array(9 + 1 + 4 + payload.length);
 
-        packet[1] = 7;
-        packet[9] = 0x12;
+        // Create 8 channels * 2 samples = 16 sequential 14-bit values
+        const eegValues = Array.from({ length: 16 }, (_, i) => i + 1);
+        const payload = packUnsignedValues(eegValues, 14);
+        const packet = new Uint8Array(9 + 1 + 4 + payload.length);
+        packet[1] = 9;
+        packet[9] = 0x12; // 8-channel EEG tag
         packet.set(payload, 14);
 
         await client.connect();
 
-        const readings: Array<{ electrode: number; samples: number[] }> = [];
-        client.eegReadings.subscribe((reading) => {
-            readings.push({ electrode: reading.electrode, samples: reading.samples });
+        const readings: Array<{ index: number; electrode: number; samples: number[] }> = [];
+        client.eegReadings.subscribe((r) =>
+            readings.push({ index: r.index, electrode: r.electrode, samples: r.samples }),
+        );
+
+        sensorCharacteristic.value = new DataView(packet.buffer);
+        sensorCharacteristic.dispatchEvent(new CustomEvent('characteristicvaluechanged'));
+
+        // Expect one reading per channel (8 channels) with 2 samples each and verify scaling + ordering
+        expect(readings).toHaveLength(8);
+        const EEG_SCALE = 1450 / 16383;
+        for (let i = 0; i < 8; i++) {
+            const r = readings[i];
+            expect(r.electrode).toBe(i);
+            expect(r.samples.length).toBe(2);
+            const v0 = (i + 1 - 8192) * EEG_SCALE;
+            const v1 = (i + 1 + 8 - 8192) * EEG_SCALE;
+            expect(r.samples[0]).toBeCloseTo(v0, 5);
+            expect(r.samples[1]).toBeCloseTo(v1, 5);
+        }
+    });
+
+    it('exports Athena optical labels for 8-channel optical packets', () => {
+        expect(selectOpticsChannels(8)).toEqual([
+            'LO_NIR',
+            'RO_NIR',
+            'LO_IR',
+            'RO_IR',
+            'LI_NIR',
+            'RI_NIR',
+            'LI_IR',
+            'RI_IR',
+        ]);
+    });
+
+    it('emits Athena optical readings with one value per optical sensor', async () => {
+        const client = new MuseAthenaClient();
+        const service = museDevice.getServiceMock(0xfe8d);
+        const sensorCharacteristic = service.getCharacteristicMock('273e0013-4c4d-454d-96be-f03bac821358');
+        const opticalValues = Array.from({ length: 16 }, (_, index) => index + 1);
+        const payload = packUnsignedValues(opticalValues, 20);
+        const packet = new Uint8Array(9 + 1 + 4 + payload.length);
+
+        packet[1] = 9;
+        packet[9] = 0x35;
+        packet.set(payload, 14);
+
+        await client.connect();
+
+        const readings: Array<{ index: number; samples: number[] }> = [];
+        client.opticalReadings.subscribe((reading) => {
+            readings.push({ index: reading.index, samples: reading.samples });
         });
 
         sensorCharacteristic.value = new DataView(packet.buffer);
         sensorCharacteristic.dispatchEvent(new CustomEvent('characteristicvaluechanged'));
 
-        expect(readings).toHaveLength(8);
-        expect(readings[0].samples).toEqual([scaleCenteredEeg(1), scaleCenteredEeg(9)]);
-        expect(readings[1].samples).toEqual([scaleCenteredEeg(2), scaleCenteredEeg(10)]);
-        expect(readings[7].samples).toEqual([scaleCenteredEeg(8), scaleCenteredEeg(16)]);
+        expect(readings).toHaveLength(2);
+        expect(readings[0].samples).toHaveLength(8);
+        expect(readings[1].samples).toHaveLength(8);
+
+        const OPTICS_SCALE = 1 / 32768;
+        // First reading should contain values 1..8 scaled
+        for (let i = 0; i < 8; i++) {
+            expect(readings[0].samples[i]).toBeCloseTo((i + 1) * OPTICS_SCALE, 8);
+        }
+        // Second reading should contain values 9..16 scaled
+        for (let i = 0; i < 8; i++) {
+            expect(readings[1].samples[i]).toBeCloseTo((i + 9) * OPTICS_SCALE, 8);
+        }
     });
 });

@@ -1,13 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { LineChart, Line, YAxis, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 import {
     MuseClient,
     MuseAthenaClient,
     channelNames as museChannelNames,
     athenaChannelNames,
+    selectOpticsChannels,
     ATHENA_PRESETS,
     AthenaPreset,
-    zipSamples
+    zipSamples,
+    type AthenaOpticalReading,
 } from 'muse-jsx';
 import { notchFilter, bandpassFilter, epoch } from '@neurosity/pipes';
 import { tap, map, BehaviorSubject, switchMap, Subscription, Observable, share } from 'rxjs';
@@ -15,6 +17,12 @@ import { AthenaLogger } from './AthenaLogger';
 import { EEGRecorder } from './EEGRecorder';
 import { getRecordings } from './db';
 import { EEGSample } from 'muse-jsx';
+import {
+    appendOpticalReading,
+    buildVisibleChannels,
+    deriveOpticalChannelNames,
+    type GraphPoint,
+} from './graph-model';
 
 // --- Types ---
 
@@ -28,19 +36,17 @@ type FilterSettings = {
     bandpassHigh: number;
 };
 
-type Reading = {
-    index: number;
-    timestamp: number;
-    [key: string]: number; // ch0, ch1, ...
-};
+const MAX_OPTICAL_POINTS = 160;
 
 // --- Hook for Muse Logic ---
 
-function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'logger', preset: AthenaPreset = 'p1045') {
+function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'logger' | 'recording', preset: AthenaPreset = 'p1045') {
     const [status, setStatus] = useState<ConnectionStatus>('disconnected');
     const [battery, setBattery] = useState<string>('unknown');
     const [accelerometer, setAccelerometer] = useState({ x: 0, y: 0, z: 0 });
-    const [data, setData] = useState<Reading[]>([]);
+    const [data, setData] = useState<GraphPoint[]>([]);
+    const [opticalData, setOpticalData] = useState<GraphPoint[]>([]);
+    const [opticalChannelCount, setOpticalChannelCount] = useState(0);
 
     const [filterSettings, setFilterSettings] = useState<FilterSettings>({
         notchEnabled: true,
@@ -184,15 +190,16 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
 
     // --- View-Dependent Graph Subscription ---
     useEffect(() => {
+        const client = clientRef.current;
         if (view === 'graph' && filteredStream$ && status === 'connected') {
             const samplingRate = 256;
             const sub = filteredStream$.pipe(
                 epoch({ duration: 250, interval: 25, samplingRate }) as any,
                 map((epoched: { data: number[][], info: any }) => {
                     const numSamples = epoched.data[0].length;
-                    const readings: Reading[] = [];
+                    const readings: GraphPoint[] = [];
                     for (let i = 0; i < numSamples; i++) {
-                        const reading: Reading = { index: i, timestamp: Date.now() };
+                        const reading: GraphPoint = { index: i, timestamp: Date.now() };
                         epoched.data.forEach((chData: number[], chIdx: number) => {
                             reading[`ch${chIdx}`] = chData[i];
                         });
@@ -200,15 +207,33 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
                     }
                     return readings;
                 }),
-                tap((readings: Reading[]) => setData(readings))
+                tap((readings: GraphPoint[]) => setData(readings))
             ).subscribe({
                 error: (err) => {
                     console.error('[App] Graph Stream error:', err);
                 }
             });
-            return () => sub.unsubscribe();
+
+            let opticalSub: Subscription | undefined;
+
+            if (mode === 'athena' && client instanceof MuseAthenaClient) {
+                opticalSub = client.opticalReadings.subscribe({
+                    next: (reading: AthenaOpticalReading) => {
+                        setOpticalChannelCount(reading.samples.length);
+                        setOpticalData((points) => appendOpticalReading(points, reading, MAX_OPTICAL_POINTS));
+                    },
+                    error: (err) => {
+                        console.error('[App] Optical Stream error:', err);
+                    },
+                });
+            }
+
+            return () => {
+                sub.unsubscribe();
+                opticalSub?.unsubscribe();
+            };
         }
-    }, [view, filteredStream$, status]);
+    }, [view, filteredStream$, mode, status]);
 
 
     const disconnect = async () => {
@@ -222,6 +247,8 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
     // Clear buffer when switching connection or mode or view
     useEffect(() => {
         setData([]);
+        setOpticalData([]);
+        setOpticalChannelCount(0);
     }, [mode, status, view]);
 
     return {
@@ -231,6 +258,8 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
         battery,
         accelerometer,
         data,
+        opticalData,
+        opticalChannelCount,
         filterSettings,
         setFilterSettings,
         clientRef,
@@ -336,15 +365,15 @@ function FilterControls({
     );
 }
 
-function EEGGraph({
+function SignalGraph({
     data,
     visibleChannels,
     channelNames,
     yRange
 }: {
-    data: Reading[],
+    data: GraphPoint[],
     visibleChannels: boolean[],
-    channelNames: string[],
+    channelNames: readonly string[],
     yRange: number
 }) {
     if (data.length === 0) return (
@@ -393,7 +422,9 @@ export default function App() {
     const [currentView, setCurrentView] = useState<'graph' | 'logger' | 'recording'>(initialView as any);
     const [selectedPreset, setSelectedPreset] = useState<AthenaPreset>('p1045');
     const [visibleChannels, setVisibleChannels] = useState<boolean[]>(new Array(8).fill(true));
+    const [visibleOpticalChannels, setVisibleOpticalChannels] = useState<boolean[]>([]);
     const [yRange, setYRange] = useState(500);
+    const [opticalYRange, setOpticalYRange] = useState(1);
     const [recordingsCount, setRecordingsCount] = useState(0);
 
     const switchView = (v: 'graph' | 'logger' | 'recording') => {
@@ -412,8 +443,21 @@ export default function App() {
         return () => window.removeEventListener('popstate', handlePopState);
     }, []);
 
-    const { connect, disconnect, status, battery, accelerometer, data, filterSettings, setFilterSettings, clientRef, filteredStream$ }
-        = useMuse(mode, enableAux, currentView === 'recording' ? 'graph' : currentView, selectedPreset);
+    const {
+        connect,
+        disconnect,
+        status,
+        battery,
+        accelerometer,
+        data,
+        opticalData,
+        opticalChannelCount,
+        filterSettings,
+        setFilterSettings,
+        clientRef,
+        filteredStream$,
+    }
+        = useMuse(mode, enableAux, currentView, selectedPreset);
 
     // Force Athena mode if in Logger view
     useEffect(() => {
@@ -424,6 +468,13 @@ export default function App() {
 
 
     const currentChannelNames = mode === 'athena' ? athenaChannelNames : museChannelNames;
+    const opticalChannelNames = useMemo(
+        () => deriveOpticalChannelNames(
+            opticalChannelCount,
+            selectOpticsChannels(opticalChannelCount),
+        ),
+        [opticalChannelCount],
+    );
 
     useEffect(() => {
         getRecordings().then(list => setRecordingsCount(list.length));
@@ -444,9 +495,21 @@ export default function App() {
         }));
     }, [mode, enableAux, currentChannelNames]);
 
+    useEffect(() => {
+        setVisibleOpticalChannels(buildVisibleChannels(opticalChannelNames));
+    }, [opticalChannelNames]);
+
 
     const toggleChannel = (idx: number) => {
         setVisibleChannels(prev => {
+            const next = [...prev];
+            next[idx] = !next[idx];
+            return next;
+        });
+    };
+
+    const toggleOpticalChannel = (idx: number) => {
+        setVisibleOpticalChannels(prev => {
             const next = [...prev];
             next[idx] = !next[idx];
             return next;
@@ -593,7 +656,7 @@ export default function App() {
                                         })}
                                     </div>
                                 </div>
-                                <EEGGraph
+                                <SignalGraph
                                     data={data}
                                     visibleChannels={visibleChannels}
                                     channelNames={currentChannelNames}
@@ -625,6 +688,67 @@ export default function App() {
                                     </div>
                                 </div>
                             </div>
+
+                            {mode === 'athena' && (
+                                <div className="glass-panel" style={{ padding: '24px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                        <h3 style={{ margin: 0 }}>OPTICAL Channels</h3>
+                                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                            {visibleOpticalChannels.map((vis, idx) => {
+                                                const channelLabel = opticalChannelNames[idx] || `Optical ${idx + 1}`;
+                                                return (
+                                                    <label
+                                                        key={channelLabel}
+                                                        className="checkbox-wrapper"
+                                                        style={{ fontSize: '0.85rem', color: COLORS[idx % COLORS.length], border: `1px solid ${vis ? COLORS[idx % COLORS.length] : 'var(--panel-border)'}`, padding: '4px 8px', borderRadius: '6px', background: vis ? 'rgba(255,255,255,0.05)' : 'transparent' }}
+                                                        title={`Toggle visibility of ${channelLabel}`}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={vis}
+                                                            onChange={() => toggleOpticalChannel(idx)}
+                                                            title={`Show or hide ${channelLabel}`}
+                                                            aria-label={`Toggle ${channelLabel}`}
+                                                        />
+                                                        {channelLabel}
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                    <SignalGraph
+                                        data={opticalData}
+                                        visibleChannels={visibleOpticalChannels}
+                                        channelNames={opticalChannelNames}
+                                        yRange={opticalYRange}
+                                    />
+
+                                    <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--panel-border)' }}>
+                                        <div className="input-group" style={{ maxWidth: '400px' }}>
+                                            <label style={{ fontWeight: 600, display: 'flex', justifyContent: 'space-between' }} htmlFor="optical-y-axis-range">
+                                                <span>OPTICAL Y-Axis Range (± a.u.)</span>
+                                                <span style={{ color: 'var(--accent)' }}>{opticalYRange.toFixed(2)}</span>
+                                            </label>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
+                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>0.10</span>
+                                                <input
+                                                    id="optical-y-axis-range"
+                                                    type="range"
+                                                    min="0.1"
+                                                    max="2"
+                                                    step="0.05"
+                                                    value={opticalYRange}
+                                                    onChange={e => setOpticalYRange(Number(e.target.value))}
+                                                    style={{ flex: 1 }}
+                                                    aria-label="OPTICAL Y-Axis Range slider"
+                                                    title="OPTICAL Y-Axis Range (0.10-2.00)"
+                                                />
+                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>2.00</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 

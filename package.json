@@ -68,12 +68,23 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "jsdom",
+    "moduleNameMapper": {
+      "^muse-jsx$": "<rootDir>/src/index.ts"
+    },
     "moduleFileExtensions": [
       "ts",
       "js"
     ],
     "transform": {
-      "^.+\\.ts$": "ts-jest"
+      "^.+\\.ts$": [
+        "ts-jest",
+        {
+          "tsconfig": {
+            "rootDir": ".",
+            "outDir": "dist-test"
+          }
+        }
+      ]
     },
     "testMatch": [
       "**/*.spec.ts"

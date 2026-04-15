@@ -11,19 +11,22 @@ export function appendOpticalReading(
     reading: AthenaOpticalReading,
     maxPoints: number,
 ): GraphPoint[] {
-    const nextPoint: GraphPoint = {
+    const point: GraphPoint = {
         index: reading.index,
         timestamp: reading.timestamp,
     };
 
-    reading.samples.forEach((value, channelIndex) => {
-        nextPoint[`ch${channelIndex}`] = value;
+    reading.samples.forEach((sample, index) => {
+        point[`ch${index}`] = sample;
     });
 
-    const nextPoints = [...points, nextPoint];
-    return nextPoints.slice(-maxPoints);
+    return [...points, point].slice(-maxPoints);
 }
 
-export function buildVisibleChannels(channelNames: string[]): boolean[] {
+export function buildVisibleChannels(channelNames: readonly string[]): boolean[] {
     return channelNames.map(() => true);
+}
+
+export function deriveOpticalChannelNames(channelCount: number, labels: readonly string[]): string[] {
+    return labels.slice(0, channelCount);
 }

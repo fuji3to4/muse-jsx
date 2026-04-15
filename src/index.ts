@@ -4,6 +4,7 @@ export {
     ATHENA_COMMANDS,
     ATHENA_PRESETS,
     opticalChannelNames,
+    selectOpticsChannels,
     channelNames as athenaChannelNames,
 } from './muse-athena';
 export type { AthenaPreset } from './muse-athena';
