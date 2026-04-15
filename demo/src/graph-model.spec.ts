@@ -1,6 +1,13 @@
 import type { AthenaOpticalReading } from 'muse-jsx';
 
-import { appendOpticalReading, buildVisibleChannels, deriveOpticalChannelNames } from './graph-model';
+import {
+    appendOpticalReading,
+    buildVisibleChannels,
+    deriveOpticalChannelNames,
+    getOpticalYAxisDomain,
+    OPTICAL_Y_RANGE_DEFAULT,
+    OPTICAL_Y_RANGE_MAX,
+} from './graph-model';
 import type { GraphPoint } from './graph-model';
 
 describe('graph model', () => {
@@ -42,5 +49,11 @@ describe('graph model', () => {
         ]);
         expect(deriveOpticalChannelNames(2, ['LO_NIR', 'RO_NIR', 'LO_IR', 'RO_IR'])).toEqual(['LO_NIR', 'RO_NIR']);
         expect(deriveOpticalChannelNames(0, ['LO_NIR'])).toEqual([]);
+    });
+
+    it('uses a zero-based optical y-axis with wider slider defaults', () => {
+        expect(getOpticalYAxisDomain(OPTICAL_Y_RANGE_DEFAULT)).toEqual([0, 2]);
+        expect(OPTICAL_Y_RANGE_DEFAULT).toBe(2);
+        expect(OPTICAL_Y_RANGE_MAX).toBe(20);
     });
 });

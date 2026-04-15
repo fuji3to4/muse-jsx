@@ -21,6 +21,9 @@ import {
     appendOpticalReading,
     buildVisibleChannels,
     deriveOpticalChannelNames,
+    getOpticalYAxisDomain,
+    OPTICAL_Y_RANGE_DEFAULT,
+    OPTICAL_Y_RANGE_MAX,
     type GraphPoint,
 } from './graph-model';
 
@@ -369,12 +372,14 @@ function SignalGraph({
     data,
     visibleChannels,
     channelNames,
-    yRange
+    yDomain,
+    showReferenceLine = true,
 }: {
     data: GraphPoint[],
     visibleChannels: boolean[],
     channelNames: readonly string[],
-    yRange: number
+    yDomain: [number, number],
+    showReferenceLine?: boolean,
 }) {
     if (data.length === 0) return (
         <div style={{ height: 400, display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#94a3b8', background: 'rgba(0,0,0,0.2)', borderRadius: '12px' }}>
@@ -386,8 +391,8 @@ function SignalGraph({
         <div className="glass-panel" style={{ height: 500, width: '100%', minWidth: 0, minHeight: 320, padding: '10px' }}>
             <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320}>
                 <LineChart data={data}>
-                    <YAxis domain={[-yRange, yRange]} stroke="#475569" fontSize={12} allowDataOverflow={true} />
-                    <ReferenceLine y={0} stroke="#64748b" strokeDasharray="4 4" />
+                    <YAxis domain={yDomain} stroke="#475569" fontSize={12} allowDataOverflow={true} />
+                    {showReferenceLine && <ReferenceLine y={0} stroke="#64748b" strokeDasharray="4 4" />}
                     <Legend verticalAlign="top" height={36} />
                     {visibleChannels.map((visible, idx) => (
                         visible && (
@@ -424,7 +429,7 @@ export default function App() {
     const [visibleChannels, setVisibleChannels] = useState<boolean[]>(new Array(8).fill(true));
     const [visibleOpticalChannels, setVisibleOpticalChannels] = useState<boolean[]>([]);
     const [yRange, setYRange] = useState(500);
-    const [opticalYRange, setOpticalYRange] = useState(1);
+    const [opticalYRange, setOpticalYRange] = useState(OPTICAL_Y_RANGE_DEFAULT);
     const [recordingsCount, setRecordingsCount] = useState(0);
 
     const switchView = (v: 'graph' | 'logger' | 'recording') => {
@@ -660,7 +665,7 @@ export default function App() {
                                     data={data}
                                     visibleChannels={visibleChannels}
                                     channelNames={currentChannelNames}
-                                    yRange={yRange}
+                                    yDomain={[-yRange, yRange]}
                                 />
 
                                 <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--panel-border)' }}>
@@ -720,13 +725,14 @@ export default function App() {
                                         data={opticalData}
                                         visibleChannels={visibleOpticalChannels}
                                         channelNames={opticalChannelNames}
-                                        yRange={opticalYRange}
+                                        yDomain={getOpticalYAxisDomain(opticalYRange)}
+                                        showReferenceLine={false}
                                     />
 
                                     <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--panel-border)' }}>
                                         <div className="input-group" style={{ maxWidth: '400px' }}>
                                             <label style={{ fontWeight: 600, display: 'flex', justifyContent: 'space-between' }} htmlFor="optical-y-axis-range">
-                                                <span>OPTICAL Y-Axis Range (± a.u.)</span>
+                                                <span>OPTICAL Y-Axis Range (0 to a.u.)</span>
                                                 <span style={{ color: 'var(--accent)' }}>{opticalYRange.toFixed(2)}</span>
                                             </label>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
@@ -735,15 +741,15 @@ export default function App() {
                                                     id="optical-y-axis-range"
                                                     type="range"
                                                     min="0.1"
-                                                    max="2"
+                                                    max={OPTICAL_Y_RANGE_MAX}
                                                     step="0.05"
                                                     value={opticalYRange}
                                                     onChange={e => setOpticalYRange(Number(e.target.value))}
                                                     style={{ flex: 1 }}
                                                     aria-label="OPTICAL Y-Axis Range slider"
-                                                    title="OPTICAL Y-Axis Range (0.10-2.00)"
+                                                    title={`OPTICAL Y-Axis Range (0.10-${OPTICAL_Y_RANGE_MAX.toFixed(2)})`}
                                                 />
-                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>2.00</span>
+                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{OPTICAL_Y_RANGE_MAX.toFixed(2)}</span>
                                             </div>
                                         </div>
                                     </div>
