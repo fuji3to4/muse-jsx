@@ -1,9 +1,11 @@
+import type { AthenaOpticalReading } from 'muse-jsx';
+
 import { appendOpticalReading, buildVisibleChannels } from './graph-model';
-import type { AthenaOpticalReading } from '../../src/lib/muse-interfaces';
+import type { GraphPoint } from './graph-model';
 
 describe('graph model', () => {
     it('caps optical history to the requested point count', () => {
-        let points: Array<{ index: number; timestamp: number; [key: string]: number }> = [];
+        let points: GraphPoint[] = [];
 
         for (let index = 0; index < 5; index += 1) {
             const reading: AthenaOpticalReading = {

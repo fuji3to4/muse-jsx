@@ -1,4 +1,4 @@
-import type { AthenaOpticalReading } from '../../src/lib/muse-interfaces';
+import type { AthenaOpticalReading } from 'muse-jsx';
 
 export type GraphPoint = {
     index: number;
