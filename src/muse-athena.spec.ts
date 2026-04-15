@@ -1,7 +1,7 @@
 import { TextDecoder as UtilTextDecoder, TextEncoder as UtilTextEncoder } from 'node:util';
 import { DeviceMock, WebBluetoothMock } from 'web-bluetooth-mock';
 
-import { ATHENA_PRESETS, ATHENA_COMMANDS, MuseAthenaClient, channelNames, selectOpticsChannels } from './muse-athena';
+import { ATHENA_PRESETS, MuseAthenaClient, channelNames, selectOpticsChannels } from './muse-athena';
 
 declare const global: any;
 
