@@ -1,7 +1,7 @@
 import { TextDecoder as UtilTextDecoder, TextEncoder as UtilTextEncoder } from 'node:util';
 import { DeviceMock, WebBluetoothMock } from 'web-bluetooth-mock';
 
-import { ATHENA_PRESETS, MuseAthenaClient, channelNames, selectOpticsChannels } from './muse-athena';
+import { ATHENA_PRESETS, ATHENA_COMMANDS, MuseAthenaClient, channelNames, selectOpticsChannels } from './muse-athena';
 
 declare const global: any;
 
@@ -49,18 +49,32 @@ describe('MuseAthenaClient', () => {
 
     it('uses default preset when starting', async () => {
         const client = new MuseAthenaClient();
-        const sendSpy = jest.spyOn(MuseAthenaClient.prototype as any, 'sendCommand').mockResolvedValue(undefined);
         const delaySpy = jest
             .spyOn(MuseAthenaClient.prototype as any, 'delay')
             .mockImplementation(() => Promise.resolve());
 
-        await client.start();
+        await client.connect();
+        const controlChar = (client as any).controlChar;
+        const writeSpy = jest
+            .spyOn(controlChar as any, 'writeValueWithoutResponse')
+            .mockImplementation(() => Promise.resolve());
 
-        const calledWithPreset = sendSpy.mock.calls.some((c: any[]) => c[0] === 'p1045');
-        expect(calledWithPreset).toBe(true);
+        try {
+            await client.start();
 
-        sendSpy.mockRestore();
-        delaySpy.mockRestore();
+            const calledWith = writeSpy.mock.calls.some((c: any[]) => {
+                const arg = c[0] as Uint8Array;
+                const expected = ATHENA_COMMANDS.p1045;
+                if (!arg || !expected) return false;
+                if (arg.length !== expected.length) return false;
+                for (let i = 0; i < arg.length; i++) if ((arg as any)[i] !== (expected as any)[i]) return false;
+                return true;
+            });
+            expect(calledWith).toBe(true);
+        } finally {
+            writeSpy.mockRestore();
+            delaySpy.mockRestore();
+        }
     });
 
     it('deinterleaves EEG samples into channel readings', async () => {
@@ -86,10 +100,17 @@ describe('MuseAthenaClient', () => {
         sensorCharacteristic.value = new DataView(packet.buffer);
         sensorCharacteristic.dispatchEvent(new CustomEvent('characteristicvaluechanged'));
 
-        // Expect one reading per channel (8 channels) with 2 samples each
+        // Expect one reading per channel (8 channels) with 2 samples each and verify scaling + ordering
         expect(readings).toHaveLength(8);
-        for (const r of readings) {
+        const EEG_SCALE = 1450 / 16383;
+        for (let i = 0; i < 8; i++) {
+            const r = readings[i];
+            expect(r.electrode).toBe(i);
             expect(r.samples.length).toBe(2);
+            const v0 = (i + 1 - 8192) * EEG_SCALE;
+            const v1 = (i + 1 + 8 - 8192) * EEG_SCALE;
+            expect(r.samples[0]).toBeCloseTo(v0, 5);
+            expect(r.samples[1]).toBeCloseTo(v1, 5);
         }
     });
 
