@@ -1,9 +1,11 @@
 # muse-jsx
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19552611.svg)](https://doi.org/10.5281/zenodo.19552611)
+[![npm version](https://img.shields.io/npm/v/muse-jsx.svg)](https://www.npmjs.com/package/muse-jsx)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/fuji3to4/muse-jsx.svg)](https://github.com/fuji3to4/muse-jsx/releases)
 
+Current npm release: 0.2.2
 
 muse-jsx (muse-js改 / muse-js *kai*) is a JavaScript library for Muse 2, Muse S (Classic), and Muse S (Athena) EEG headsets (using Web Bluetooth).
 
@@ -12,8 +14,8 @@ muse-jsx (muse-js改 / muse-js *kai*) is a JavaScript library for Muse 2, Muse S
 
 ## About this
 
-This repository is a derivative of the original [muse-js](https://github.com/urish/muse-js), modified for compatibility with modern Node.js versions (20+) and RxJS (7+). 
-Additionally, it introduces experimental support for newer Muse S (Athena).
+This repository is derived from the original [muse-js](https://github.com/urish/muse-js) and updated for compatibility with modern Node.js versions (20+) and RxJS (7+).
+It also includes experimental support for newer Muse S (Athena).
 
 - **Original:** <https://github.com/urish/muse-js>
 - **License:** See the included `LICENSE` (original attributions preserved).
@@ -24,15 +26,21 @@ Additionally, it introduces experimental support for newer Muse S (Athena).
 
 ## Installation
 
-**Option 1: Install from GitHub (Recommended for latest version)**
+**Option 1: Install from npm**
+
+```bash
+npm install muse-jsx
+```
+
+This package supports both CommonJS (`require`) and ES modules (`import`).
+
+**Option 2: Install from GitHub (latest development version)**
 
 ```bash
 npm install git+https://github.com/fuji3to4/muse-jsx.git
 ```
 
-> **Note:** This package supports both CommonJS (`require`) and ES modules (`import`). After installation, rebuild the package by running `npm run build` in the `muse-jsx` directory if needed.
-
-**Option 2: Clone and link locally**
+**Option 3: Clone and link locally**
 
 ```bash
 git clone https://github.com/fuji3to4/muse-jsx.git
