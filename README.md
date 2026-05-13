@@ -1,11 +1,10 @@
 # muse-jsx
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19552611.svg)](https://doi.org/10.5281/zenodo.19552611)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20155335.svg)](https://doi.org/10.5281/zenodo.20155335)
 [![npm version](https://img.shields.io/npm/v/muse-jsx.svg)](https://www.npmjs.com/package/muse-jsx)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/fuji3to4/muse-jsx.svg)](https://github.com/fuji3to4/muse-jsx/releases)
 
-Current npm release: 0.2.2
 
 muse-jsx (muse-js改 / muse-js *kai*) is a JavaScript library for Muse 2, Muse S (Classic), and Muse S (Athena) EEG headsets (using Web Bluetooth).
 
