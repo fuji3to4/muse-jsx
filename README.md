@@ -228,6 +228,8 @@ This project was made possible by the following open-source projects. We are gra
 
 If you use this project in research or publications, please cite:
 
+Citation is appreciated when this software meaningfully contributes to your research outputs.
+
 Satoshi Fujii. (2026). fuji3to4/muse-jsx: v0.2.2 (v0.2.2). Zenodo. https://doi.org/10.5281/zenodo.20155335
 
 Repository: https://github.com/fuji3to4/muse-jsx
