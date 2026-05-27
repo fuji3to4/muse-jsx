@@ -224,6 +224,28 @@ This project was made possible by the following open-source projects. We are gra
 - [Amused-EEG/amused-py](https://github.com/Amused-EEG/amused-py) - Python tools for Muse EEG devices
 - [DominiqueMakowski/OpenMuse](https://github.com/DominiqueMakowski/OpenMuse) - Open-source Muse project
 
+## Citation
+
+If you use this project in research or publications, please cite:
+
+Satoshi Fujii. (2026). fuji3to4/muse-jsx: v0.2.2 (v0.2.2). Zenodo. https://doi.org/10.5281/zenodo.20155335
+
+Repository: https://github.com/fuji3to4/muse-jsx
+
+BibTeX:
+
+```bibtex
+@software{fujii_2026_muse_jsx,
+  author       = {Satoshi Fujii},
+  title        = {fuji3to4/muse-jsx: v0.2.2},
+  year         = {2026},
+  publisher    = {Zenodo},
+  version      = {v0.2.2},
+  doi          = {10.5281/zenodo.20155335},
+  url          = {https://doi.org/10.5281/zenodo.20155335}
+}
+```
+
 ## License
 
 MIT License

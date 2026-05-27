@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as follows."
+title: "muse-jsx"
+type: software
+version: "v0.2.2"
+doi: 10.5281/zenodo.20155335
+url: "https://doi.org/10.5281/zenodo.20155335"
+repository-code: "https://github.com/fuji3to4/muse-jsx"
+license: "MIT"
+authors:
+  - family-names: "Fujii"
+    given-names: "Satoshi"
