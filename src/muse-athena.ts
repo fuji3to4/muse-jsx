@@ -82,13 +82,13 @@ export class MuseAthenaClient {
     private controlChar!: BluetoothRemoteGATTCharacteristic;
     private athenaSensorChar!: BluetoothRemoteGATTCharacteristic;
 
-    // Timestamp tracking state
-    private lastEegIndex: number | null = null;
-    private lastEegTimestamp: number | null = null;
-    private lastAccGyroIndex: number | null = null;
-    private lastAccGyroTimestamp: number | null = null;
-    private lastOpticalIndex: number | null = null;
-    private lastOpticalTimestamp: number | null = null;
+    // Timestamp tracking state - packet count based (matches BrainFlow's high-res approach)
+    private eegPacketCount = 0;
+    private eegBaseTimestamp = 0;
+    private accGyroPacketCount = 0;
+    private accGyroBaseTimestamp = 0;
+    private opticalPacketCount = 0;
+    private opticalBaseTimestamp = 0;
 
     async connect(gatt?: BluetoothRemoteGATTServer) {
         if (typeof isSecureContext !== 'undefined' && !isSecureContext) {
@@ -212,7 +212,15 @@ export class MuseAthenaClient {
                     const [nextIdx, type, entries, samples, freqHz] = parsePacket(packet, tag, idx, false);
                     if (type === targetType) {
                         if (type === 'EEG') {
-                            const timestamp = this.getAthenaTimestamp(eventIndex, samples, freqHz, 'eeg');
+                            // Initialize base timestamp on first packet
+                            if (this.eegBaseTimestamp === 0) {
+                                this.eegBaseTimestamp = Date.now();
+                            }
+                            // Calculate packet timestamp based on packet count (fixed delta)
+                            const SAMPLES_PER_PACKET = samples; // 2 for EEG
+                            const packetTimestamp =
+                                this.eegBaseTimestamp + (this.eegPacketCount * SAMPLES_PER_PACKET * 1000) / freqHz;
+
                             for (const entry of entries) {
                                 const allSamples = entry.data;
                                 const channels = allSamples.length / samples;
@@ -220,23 +228,33 @@ export class MuseAthenaClient {
                                     const samplesArr = Array.from({ length: samples }, (_, sampleIndex) => {
                                         return allSamples[sampleIndex * channels + ch];
                                     });
+                                    // Each sample gets its own timestamp within the packet
+                                    const sampleTimestamp = packetTimestamp;
                                     observer.next({
                                         index: eventIndex,
                                         electrode: ch,
-                                        timestamp: timestamp,
+                                        timestamp: sampleTimestamp,
                                         samples: samplesArr,
                                     } as unknown as T);
                                 }
                             }
+                            this.eegPacketCount++;
                         } else if (type === 'ACC_GYRO') {
+                            // Initialize base timestamp on first packet
+                            if (this.accGyroBaseTimestamp === 0) {
+                                this.accGyroBaseTimestamp = Date.now();
+                            }
+                            // Calculate packet timestamp based on packet count (fixed delta)
+                            const packetTimestamp =
+                                this.accGyroBaseTimestamp + (this.accGyroPacketCount * samples * 1000) / freqHz;
+
                             for (let i = 0; i < samples; i++) {
-                                const timestamp = this.getAthenaTimestamp(eventIndex, 1, freqHz, 'accgyro');
                                 const accEntry = entries[i * 2];
                                 const gyroEntry = entries[i * 2 + 1];
                                 if (accEntry && accEntry.type === 'ACC') {
                                     observer.next({
                                         index: eventIndex,
-                                        timestamp,
+                                        timestamp: packetTimestamp,
                                         acc: { x: accEntry.data[0], y: accEntry.data[1], z: accEntry.data[2] },
                                         gyro: {
                                             x: gyroEntry?.data[0] || 0,
@@ -246,27 +264,29 @@ export class MuseAthenaClient {
                                     } as unknown as T);
                                 }
                             }
+                            this.accGyroPacketCount++;
                         } else if (type === 'OPTICAL') {
+                            // Initialize base timestamp on first packet
+                            if (this.opticalBaseTimestamp === 0) {
+                                this.opticalBaseTimestamp = Date.now();
+                            }
+                            // Calculate packet timestamp based on packet count (fixed delta)
+                            const packetTimestamp =
+                                this.opticalBaseTimestamp + (this.opticalPacketCount * samples * 1000) / freqHz;
+
                             for (let i = 0; i < samples; i++) {
-                                const timestamp = this.getAthenaTimestamp(eventIndex, 1, freqHz, 'optical');
                                 const optEntry = entries[i];
                                 if (optEntry && optEntry.type === 'OPTICAL') {
                                     observer.next({
                                         index: eventIndex,
                                         opticalChannel: i % 3,
-                                        timestamp,
+                                        timestamp: packetTimestamp,
                                         samples: optEntry.data,
                                     } as unknown as T);
                                 }
                             }
+                            this.opticalPacketCount++;
                         }
-                    } else if (type === 'EEG' || type === 'ACC_GYRO' || type === 'OPTICAL') {
-                        this.getAthenaTimestamp(
-                            eventIndex,
-                            samples,
-                            freqHz,
-                            type === 'EEG' ? 'eeg' : type === 'ACC_GYRO' ? 'accgyro' : 'optical',
-                        );
                     }
 
                     if (nextIdx <= idx) {
@@ -367,12 +387,12 @@ export class MuseAthenaClient {
 
     disconnect() {
         if (this.gatt) {
-            this.lastEegIndex = null;
-            this.lastEegTimestamp = null;
-            this.lastAccGyroIndex = null;
-            this.lastAccGyroTimestamp = null;
-            this.lastOpticalIndex = null;
-            this.lastOpticalTimestamp = null;
+            this.eegPacketCount = 0;
+            this.eegBaseTimestamp = 0;
+            this.accGyroPacketCount = 0;
+            this.accGyroBaseTimestamp = 0;
+            this.opticalPacketCount = 0;
+            this.opticalBaseTimestamp = 0;
             if (this.gatt.connected) this.gatt.disconnect();
             this.connectionStatus.next(false);
         }
@@ -402,49 +422,5 @@ export class MuseAthenaClient {
             bl: '',
             pv: 0,
         };
-    }
-
-    private getAthenaTimestamp(
-        eventIndex: number,
-        samplesPerReading: number,
-        frequency: number,
-        dataType: string,
-    ): number {
-        const READING_DELTA = 1000 * (1.0 / frequency) * samplesPerReading;
-        let lastIndex =
-            dataType === 'eeg'
-                ? this.lastEegIndex
-                : dataType === 'accgyro'
-                  ? this.lastAccGyroIndex
-                  : this.lastOpticalIndex;
-        let lastTimestamp =
-            dataType === 'eeg'
-                ? this.lastEegTimestamp
-                : dataType === 'accgyro'
-                  ? this.lastAccGyroTimestamp
-                  : this.lastOpticalTimestamp;
-
-        const now = Date.now();
-        if (lastIndex === null || lastTimestamp === null || now - lastTimestamp > 500) {
-            // Recalibrate or initial
-            lastTimestamp = now - READING_DELTA;
-        } else {
-            // !!! FIX: Just increment by nominal delta to maintain exact 256Hz speed
-            // Global eventIndex gaps in Athena represent other packets (IMU/etc), not time.
-            lastTimestamp = lastTimestamp + READING_DELTA;
-        }
-
-        if (dataType === 'eeg') {
-            this.lastEegIndex = eventIndex;
-            this.lastEegTimestamp = lastTimestamp;
-        } else if (dataType === 'accgyro') {
-            this.lastAccGyroIndex = eventIndex;
-            this.lastAccGyroTimestamp = lastTimestamp;
-        } else {
-            this.lastOpticalIndex = eventIndex;
-            this.lastOpticalTimestamp = lastTimestamp;
-        }
-
-        return lastTimestamp;
     }
 }
