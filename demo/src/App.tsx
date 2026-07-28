@@ -167,7 +167,13 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
         const baseFilteredStream$ = filterSettings$.current.pipe(
             switchMap(settings => {
                 if (!clientRef.current || !client.eegReadings) return [];
-                let stream = client.eegReadings.pipe(zipSamples);
+                let stream = client.eegReadings.pipe(
+                    tap((data) => {console.log('raw eeg data:', data);}),
+                    zipSamples,
+                    tap((sample: EEGSample) => {
+                        console.log('filtered eeg sample:', sample);
+                    })  
+                );
                 if (settings.notchEnabled) {
                     stream = stream.pipe(notchFilter({ nbChannels, cutoffFrequency: settings.notchFrequency }));
                 }

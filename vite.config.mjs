@@ -13,6 +13,9 @@ export default defineConfig({
     resolve: {
         alias: {
             '@': resolve(__dirname, './src'),
+            // @neurosity/pipes の browser エントリ(dist/browser)は Parcel ランタイム前提で
+            // Vite の ESM 実行時に `parcelRequire is not defined` を起こすため ESM を強制する。
+            '@neurosity/pipes': resolve(__dirname, './node_modules/@neurosity/pipes/dist/esm/index.js'),
         },
     },
     build: {

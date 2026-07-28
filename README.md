@@ -63,6 +63,7 @@ npm link muse-jsx
 
 ```bash
 npm install
+npm run build
 npm start
 ```
 
