@@ -88,6 +88,15 @@ export class MuseAthenaClient {
     private lastAccGyroTimestamp: number | null = null;
     private lastOpticalTimestamp: number | null = null;
 
+    // Per-sensor-type sequential index. `AthenaParsedBlock.packageNum` is a physical
+    // BLE-packet-level sequence number shared across every sensor type in a notification,
+    // so a sensor type only receiving every Nth physical packet would see its `index`
+    // jump by N instead of counting 0,1,2,... -- these counters give each sensor stream
+    // its own independent, densely-increasing index instead.
+    private eegIndexCounter = 0;
+    private accGyroIndexCounter = 0;
+    private opticalIndexCounter = 0;
+
     async connect(gatt?: BluetoothRemoteGATTServer) {
         if (typeof isSecureContext !== 'undefined' && !isSecureContext) {
             throw new Error('Web Bluetooth requires a secure context (https or localhost).');
@@ -199,6 +208,9 @@ export class MuseAthenaClient {
         this.lastEegTimestamp = null;
         this.lastAccGyroTimestamp = null;
         this.lastOpticalTimestamp = null;
+        this.eegIndexCounter = 0;
+        this.accGyroIndexCounter = 0;
+        this.opticalIndexCounter = 0;
     }
 
     private getPacketBaseTimestamp(
@@ -207,13 +219,18 @@ export class MuseAthenaClient {
         nSamples: number,
         rateHz: number,
     ): number {
+        // A gap this large implies a real stall/disconnect rather than routine BLE
+        // jitter -- resync to real time instead of dragging a stale virtual clock forward.
+        if (lastTimestamp !== null && currentTimestamp - lastTimestamp > 1000) {
+            lastTimestamp = null;
+        }
         if (lastTimestamp === null) {
             return currentTimestamp - ((nSamples - 1) * 1000) / rateHz;
         }
         if (currentTimestamp <= lastTimestamp) {
             return currentTimestamp;
         }
-        const predicted = lastTimestamp + 1000 / rateHz;
+        const predicted = lastTimestamp + (nSamples * 1000) / rateHz;
         if (predicted <= currentTimestamp) {
             return predicted;
         }
@@ -232,16 +249,17 @@ export class MuseAthenaClient {
                 const hostTimestamp = Date.now();
 
                 for (const block of matchingBlocks) {
-                    const { packageNum: eventIndex, entries, samples, freqHz } = block;
+                    const { entries, samples, freqHz } = block;
 
                     if (targetType === 'EEG') {
+                        const eventIndex = this.eegIndexCounter++;
                         const packetTimestamp = this.getPacketBaseTimestamp(
                             this.lastEegTimestamp,
                             hostTimestamp,
                             samples,
                             freqHz,
                         );
-                        this.lastEegTimestamp = hostTimestamp;
+                        this.lastEegTimestamp = packetTimestamp;
 
                         for (const entry of entries) {
                             const allSamples = entry.data;
@@ -259,13 +277,14 @@ export class MuseAthenaClient {
                             }
                         }
                     } else if (targetType === 'ACC_GYRO') {
+                        const eventIndex = this.accGyroIndexCounter++;
                         const packetTimestamp = this.getPacketBaseTimestamp(
                             this.lastAccGyroTimestamp,
                             hostTimestamp,
                             samples,
                             freqHz,
                         );
-                        this.lastAccGyroTimestamp = hostTimestamp;
+                        this.lastAccGyroTimestamp = packetTimestamp;
 
                         for (let i = 0; i < samples; i++) {
                             const accEntry = entries[i * 2];
@@ -284,13 +303,14 @@ export class MuseAthenaClient {
                             }
                         }
                     } else if (targetType === 'OPTICAL') {
+                        const eventIndex = this.opticalIndexCounter++;
                         const packetTimestamp = this.getPacketBaseTimestamp(
                             this.lastOpticalTimestamp,
                             hostTimestamp,
                             samples,
                             freqHz,
                         );
-                        this.lastOpticalTimestamp = hostTimestamp;
+                        this.lastOpticalTimestamp = packetTimestamp;
 
                         for (let i = 0; i < samples; i++) {
                             const optEntry = entries[i];
