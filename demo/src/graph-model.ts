@@ -1,7 +1,7 @@
 import type { AthenaOpticalReading } from 'muse-jsx';
 
-export const OPTICAL_Y_RANGE_DEFAULT = 2;
 export const OPTICAL_Y_RANGE_MAX = 20;
+export const OPTICAL_Y_RANGE_MIN_MAX = 20;
 
 export type GraphPoint = {
     index: number;
@@ -34,6 +34,6 @@ export function deriveOpticalChannelNames(channelCount: number, labels: readonly
     return labels.slice(0, channelCount);
 }
 
-export function getOpticalYAxisDomain(yRange: number): [number, number] {
-    return [0, yRange];
+export function getOpticalYAxisDomain(yRangeMin: number, yRangeMax: number): [number, number] {
+    return [yRangeMin, yRangeMax];
 }

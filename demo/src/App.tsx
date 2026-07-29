@@ -23,7 +23,9 @@ import {
     deriveOpticalChannelNames,
     getOpticalYAxisDomain,
     OPTICAL_Y_RANGE_DEFAULT,
+    OPTICAL_Y_RANGE_MIN_DEFAULT,
     OPTICAL_Y_RANGE_MAX,
+    OPTICAL_Y_RANGE_MIN_MAX,
     type GraphPoint,
 } from './graph-model';
 
@@ -167,13 +169,14 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
         const baseFilteredStream$ = filterSettings$.current.pipe(
             switchMap(settings => {
                 if (!clientRef.current || !client.eegReadings) return [];
-                let stream = client.eegReadings.pipe(
-                    tap((data) => {console.log('raw eeg data:', data);}),
-                    zipSamples,
-                    tap((sample: EEGSample) => {
-                        console.log('filtered eeg sample:', sample);
-                    })  
-                );
+                // let stream = client.eegReadings.pipe(
+                //     tap((data) => {console.log('raw eeg data:', data);}),
+                //     zipSamples,
+                //     tap((sample: EEGSample) => {
+                //         console.log('filtered eeg sample:', sample);
+                //     })  
+                // );
+                let stream = client.eegReadings.pipe(zipSamples);
                 if (settings.notchEnabled) {
                     stream = stream.pipe(notchFilter({ nbChannels, cutoffFrequency: settings.notchFrequency }));
                 }
@@ -435,7 +438,8 @@ export default function App() {
     const [visibleChannels, setVisibleChannels] = useState<boolean[]>(new Array(8).fill(true));
     const [visibleOpticalChannels, setVisibleOpticalChannels] = useState<boolean[]>([]);
     const [yRange, setYRange] = useState(500);
-    const [opticalYRange, setOpticalYRange] = useState(OPTICAL_Y_RANGE_DEFAULT);
+    const [opticalYRange, setOpticalYRange] = useState(20);
+    const [opticalYRangeMin, setOpticalYRangeMin] = useState(0);
     const [recordingsCount, setRecordingsCount] = useState(0);
 
     const switchView = (v: 'graph' | 'logger' | 'recording') => {
@@ -731,29 +735,52 @@ export default function App() {
                                         data={opticalData}
                                         visibleChannels={visibleOpticalChannels}
                                         channelNames={opticalChannelNames}
-                                        yDomain={getOpticalYAxisDomain(opticalYRange)}
+                                        yDomain={getOpticalYAxisDomain(opticalYRangeMin, opticalYRange)}
                                         showReferenceLine={false}
                                     />
 
                                     <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--panel-border)' }}>
                                         <div className="input-group" style={{ maxWidth: '400px' }}>
+                                            <label style={{ fontWeight: 600, display: 'flex', justifyContent: 'space-between' }} htmlFor="optical-y-axis-range-min">
+                                                <span>OPTICAL Y-Axis Min (a.u.)</span>
+                                                <span style={{ color: 'var(--accent)' }}>{opticalYRangeMin.toFixed(2)}</span>
+                                            </label>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
+                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>0.00</span>
+                                                <input
+                                                    id="optical-y-axis-range-min"
+                                                    type="range"
+                                                    min="0"
+                                                    max={OPTICAL_Y_RANGE_MIN_MAX}
+                                                    step="0.05"
+                                                    value={opticalYRangeMin}
+                                                    onChange={e => setOpticalYRangeMin(Number(e.target.value))}
+                                                    style={{ flex: 1 }}
+                                                    aria-label="OPTICAL Y-Axis Min slider"
+                                                    title={`OPTICAL Y-Axis Min (0.00 - ${OPTICAL_Y_RANGE_MIN_MAX.toFixed(2)})`}
+                                                />
+                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{OPTICAL_Y_RANGE_MIN_MAX.toFixed(2)}</span>
+                                                
+                                            </div>
+                                        </div>
+                                        <div className="input-group" style={{ maxWidth: '400px', marginTop: '16px' }}>
                                             <label style={{ fontWeight: 600, display: 'flex', justifyContent: 'space-between' }} htmlFor="optical-y-axis-range">
-                                                <span>OPTICAL Y-Axis Range (0 to a.u.)</span>
+                                                <span>OPTICAL Y-Axis Max (a.u.)</span>
                                                 <span style={{ color: 'var(--accent)' }}>{opticalYRange.toFixed(2)}</span>
                                             </label>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
-                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>0.10</span>
+                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>0.00</span>
                                                 <input
                                                     id="optical-y-axis-range"
                                                     type="range"
-                                                    min="0.1"
+                                                    min="0"
                                                     max={OPTICAL_Y_RANGE_MAX}
                                                     step="0.05"
                                                     value={opticalYRange}
                                                     onChange={e => setOpticalYRange(Number(e.target.value))}
                                                     style={{ flex: 1 }}
-                                                    aria-label="OPTICAL Y-Axis Range slider"
-                                                    title={`OPTICAL Y-Axis Range (0.10-${OPTICAL_Y_RANGE_MAX.toFixed(2)})`}
+                                                    aria-label="OPTICAL Y-Axis Max slider"
+                                                    title={`OPTICAL Y-Axis Max (0.00 -${OPTICAL_Y_RANGE_MAX.toFixed(2)})`}
                                                 />
                                                 <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{OPTICAL_Y_RANGE_MAX.toFixed(2)}</span>
                                             </div>
