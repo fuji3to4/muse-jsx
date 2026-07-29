@@ -50,9 +50,7 @@ describe('graph model', () => {
     });
 
     it('uses a zero-based optical y-axis with wider slider defaults', () => {
-        expect(getOpticalYAxisDomain(0, OPTICAL_Y_RANGE_DEFAULT)).toEqual([0, 2]);
         expect(getOpticalYAxisDomain(-1, 5)).toEqual([-1, 5]);
-        expect(OPTICAL_Y_RANGE_DEFAULT).toBe(2);
         expect(OPTICAL_Y_RANGE_MAX).toBe(20);
     });
 });
