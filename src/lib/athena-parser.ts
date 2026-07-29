@@ -31,18 +31,18 @@ import {
     SUBPACKET_HEADER_SIZE,
 } from './athena-constants';
 
-const ATHENA_FREQ_MAP: Record<number, number> = {
-    0x0: 0, // Invalid
-    0x1: 256,
-    0x2: 128,
-    0x3: 64,
-    0x4: 52,
-    0x5: 32,
-    0x6: 16,
-    0x7: 10,
-    0x8: 1,
-    0x9: 0.1,
-};
+// const ATHENA_FREQ_MAP: Record<number, number> = {
+//     0x0: 0, // Invalid
+//     0x1: 256,
+//     0x2: 128,
+//     0x3: 64,
+//     0x4: 52,
+//     0x5: 32,
+//     0x6: 16,
+//     0x7: 10,
+//     0x8: 1,
+//     0x9: 0.1,
+// };
 
 /**
  * Data types from the lower 4 bits of the tag
@@ -173,25 +173,25 @@ function parseUintLEValues(buf: Uint8Array, bitWidth: number): number[] {
 /**
  * Parse signed X-bit little-endian values from buffer
  */
-function parseIntLEValues(buf: Uint8Array, bitWidth: number): number[] {
-    const uints = parseUintLEValues(buf, bitWidth);
-    const maxVal = 1 << bitWidth;
-    const halfVal = 1 << (bitWidth - 1);
-    return uints.map((v) => (v >= halfVal ? v - maxVal : v));
-}
+// function parseIntLEValues(buf: Uint8Array, bitWidth: number): number[] {
+//     const uints = parseUintLEValues(buf, bitWidth);
+//     const maxVal = 1 << bitWidth;
+//     const halfVal = 1 << (bitWidth - 1);
+//     return uints.map((v) => (v >= halfVal ? v - maxVal : v));
+// }
 
 /**
  * Extract bits from bit array and convert to integer (little-endian)
  */
-function bitsToInt(bits: number[], startIdx: number, width: number): number {
-    let val = 0;
-    for (let i = 0; i < width; i++) {
-        if (bits[startIdx + i]) {
-            val |= 1 << i;
-        }
-    }
-    return val;
-}
+// function bitsToInt(bits: number[], startIdx: number, width: number): number {
+//     let val = 0;
+//     for (let i = 0; i < width; i++) {
+//         if (bits[startIdx + i]) {
+//             val |= 1 << i;
+//         }
+//     }
+//     return val;
+// }
 
 /**
  * Parse a single packet based on tag

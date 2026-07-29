@@ -5,7 +5,6 @@ import {
     buildVisibleChannels,
     deriveOpticalChannelNames,
     getOpticalYAxisDomain,
-    OPTICAL_Y_RANGE_DEFAULT,
     OPTICAL_Y_RANGE_MAX,
 } from './graph-model';
 import type { GraphPoint } from './graph-model';
