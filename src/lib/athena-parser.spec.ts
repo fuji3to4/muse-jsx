@@ -1,4 +1,5 @@
 import { channelNames, parsePacket } from './athena-parser';
+import { MUSE_ATHENA_EEG_SCALE_FACTOR, MUSE_ATHENA_BATTERY_SCALE_FACTOR } from './athena-constants';
 
 function packUnsignedValues(values: number[], bitWidth: number): Uint8Array {
     const totalBits = values.length * bitWidth;
@@ -40,30 +41,28 @@ describe('parsePacket', () => {
         expect(entries[0].data).toHaveLength(16);
     });
 
-    it('scales Athena EEG values around zero using the offset-binary midpoint', () => {
-        const eegValues = new Array(16).fill(8192);
+    it("scales Athena EEG values using BrainFlow's raw scale factor with no offset subtraction", () => {
+        const eegValues = [0, 8192, 16383, 1, ...new Array(12).fill(0)];
         const payload = packUnsignedValues(eegValues, 14);
         const packet = new Uint8Array(1 + 4 + payload.length);
 
         packet[0] = 0x12;
         packet.set(payload, 5);
 
-        const [, type, entries, samples, freqHz] = parsePacket(packet, 0x12, 0, false);
+        const [, type, entries] = parsePacket(packet, 0x12, 0, false);
 
         expect(type).toBe('EEG');
-        expect(samples).toBe(2);
-        expect(freqHz).toBe(256);
-        expect(entries).toHaveLength(1);
-        expect(entries[0].data).toHaveLength(16);
-        expect(entries[0].data[0]).toBeCloseTo(0, 6);
-        expect(entries[0].data[15]).toBeCloseTo(0, 6);
+        expect(entries[0].data[0]).toBeCloseTo(0 * MUSE_ATHENA_EEG_SCALE_FACTOR, 6);
+        expect(entries[0].data[1]).toBeCloseTo(8192 * MUSE_ATHENA_EEG_SCALE_FACTOR, 6);
+        expect(entries[0].data[2]).toBeCloseTo(16383 * MUSE_ATHENA_EEG_SCALE_FACTOR, 6);
+        expect(entries[0].data[3]).toBeCloseTo(1 * MUSE_ATHENA_EEG_SCALE_FACTOR, 6);
     });
 
-    it('parses 0x88 battery packets from the first two payload bytes and consumes the full payload', () => {
-        const payload = new Uint8Array(64);
+    it('parses 0x88 battery packets from a fixed 20-byte payload, ignoring trailing bytes', () => {
+        const payload = new Uint8Array(30);
         payload[0] = 0xae;
         payload[1] = 0x62;
-        payload[63] = 0xff;
+        payload[25] = 0xff; // beyond the fixed 20-byte payload; must not affect parsing
 
         const packet = new Uint8Array(1 + 4 + payload.length);
         packet[0] = 0x88;
@@ -74,7 +73,7 @@ describe('parsePacket', () => {
         expect(type).toBe('BATTERY');
         expect(samples).toBe(1);
         expect(freqHz).toBe(0.2);
-        expect(nextIdx).toBe(packet.length);
-        expect(entries).toEqual([{ type: 'BATTERY', data: [0x62ae / 256] }]);
+        expect(nextIdx).toBe(5 + 20); // fixed 20-byte payload, not the full 30-byte buffer
+        expect(entries).toEqual([{ type: 'BATTERY', data: [0x62ae * MUSE_ATHENA_BATTERY_SCALE_FACTOR] }]);
     });
 });

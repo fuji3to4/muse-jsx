@@ -20,7 +20,15 @@
 /**
  * Metadata about the Athena tags based on bitmasks
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+ 
+import {
+    MUSE_ATHENA_EEG_SCALE_FACTOR,
+    MUSE_ATHENA_ACC_SCALE_FACTOR,
+    MUSE_ATHENA_GYRO_SCALE_FACTOR,
+    MUSE_ATHENA_OPTICS_SCALE_FACTOR,
+    MUSE_ATHENA_BATTERY_SCALE_FACTOR,
+} from './athena-constants';
+
 const ATHENA_FREQ_MAP: Record<number, number> = {
     0x0: 0, // Invalid
     0x1: 256,
@@ -71,11 +79,6 @@ interface AthenaSensorConfig {
     dataLen: number;
 }
 
-const EEG_SCALE = 1450 / 16383;
-const ACC_SCALE = 0.0000610352;
-const GYRO_SCALE = -0.0074768;
-const OPTICS_SCALE = 1 / 32768;
-
 export const channelNames = ['TP9', 'AF7', 'AF8', 'TP10', 'AUX_1', 'AUX_2', 'AUX_3', 'AUX_4'] as const;
 export const opticalChannelNames = ['ambient', 'infrared', 'red'] as const;
 export const ACCGYRO_CHANNELS = ['ACC_X', 'ACC_Y', 'ACC_Z', 'GYRO_X', 'GYRO_Y', 'GYRO_Z'] as const;
@@ -99,7 +102,7 @@ export const OPTICS_CHANNELS = [
 ] as const;
 
 const OPTICS_INDEXES: Record<number, readonly number[]> = {
-    4: [4, 5, 6, 7],
+    4: [0, 1, 2, 3],
     8: [0, 1, 2, 3, 4, 5, 6, 7],
     16: Array.from({ length: 16 }, (_, index) => index),
 };
@@ -120,7 +123,7 @@ const SENSOR_CONFIG: Record<number, AthenaSensorConfig> = {
     0x36: { type: 'OPTICAL', nChannels: 16, nSamples: 1, rate: 64, dataLen: 40 },
     0x47: { type: 'ACC_GYRO', nChannels: 6, nSamples: 3, rate: 52, dataLen: 36 },
     0x53: { type: 'DRL_REF', nChannels: 0, nSamples: 2, rate: 32, dataLen: 24 },
-    0x88: { type: 'BATTERY', nChannels: 1, nSamples: 1, rate: 0.2, dataLen: 188 },
+    0x88: { type: 'BATTERY', nChannels: 1, nSamples: 1, rate: 0.2, dataLen: 20 },
     0x98: { type: 'BATTERY', nChannels: 1, nSamples: 1, rate: 1, dataLen: 20 },
 };
 
@@ -214,12 +217,7 @@ export function parsePacket(
 
             const block = data.subarray(payloadStart, endIndex);
             const values = parseUintLEValues(block, 14);
-            // Align Athena EEG scaling with OpenMuse / MuseAthenaDataformatParser.
-            // Scale 14-bit values to microvolts and center at 0
-            // Offset binary: 8192 (=2^14/2) is the center (0 uV)
-            // MuseAthenaDataformatParser uses 1450 µV for full scale (2^14 - 1 = 16383)
-            // Scaling: 1450 uV / 16383 LSB approx 0.0885
-            const scaled = values.map((v) => (v - 8192) * EEG_SCALE);
+            const scaled = values.map((v) => v * MUSE_ATHENA_EEG_SCALE_FACTOR);
 
             return [endIndex, sensor.type, [{ type: sensor.type, data: scaled }], sensor.nSamples, sensor.rate];
         }
@@ -231,7 +229,7 @@ export function parsePacket(
 
             const block = data.subarray(payloadStart, endIndex);
             const values = parseUintLEValues(block, 14);
-            const scaled = values.map((v) => (v - 8192) * EEG_SCALE);
+            const scaled = values.map((v) => (v - 8192) * MUSE_ATHENA_EEG_SCALE_FACTOR);
             return [endIndex, sensor.type, [{ type: sensor.type, data: scaled }], sensor.nSamples, sensor.rate];
         }
 
@@ -250,8 +248,8 @@ export function parsePacket(
             const entries: AthenaEntry[] = [];
             for (let i = 0; i < 3; i++) {
                 const base = i * 6;
-                const accScaled = vals.slice(base, base + 3).map((x) => x * ACC_SCALE);
-                const gyroScaled = vals.slice(base + 3, base + 6).map((x) => x * GYRO_SCALE);
+                const accScaled = vals.slice(base, base + 3).map((x) => x * MUSE_ATHENA_ACC_SCALE_FACTOR);
+                const gyroScaled = vals.slice(base + 3, base + 6).map((x) => x * MUSE_ATHENA_GYRO_SCALE_FACTOR);
                 entries.push({ type: 'ACC', data: accScaled });
                 entries.push({ type: 'GYRO', data: gyroScaled });
             }
@@ -270,7 +268,7 @@ export function parsePacket(
             for (let s = 0; s < sensor.nSamples; s++) {
                 const scaled = values
                     .slice(s * sensor.nChannels, (s + 1) * sensor.nChannels)
-                    .map((x) => x * OPTICS_SCALE);
+                    .map((x) => x * MUSE_ATHENA_OPTICS_SCALE_FACTOR);
                 entries.push({ type: 'OPTICAL', data: scaled });
             }
 
@@ -288,7 +286,7 @@ export function parsePacket(
             for (let s = 0; s < sensor.nSamples; s++) {
                 const scaled = values
                     .slice(s * sensor.nChannels, (s + 1) * sensor.nChannels)
-                    .map((x) => x * OPTICS_SCALE);
+                    .map((x) => x * MUSE_ATHENA_OPTICS_SCALE_FACTOR);
                 entries.push({ type: 'OPTICAL', data: scaled });
             }
 
@@ -302,20 +300,19 @@ export function parsePacket(
 
             const block = data.subarray(payloadStart, endIndex);
             const values = parseUintLEValues(block, 20);
-            const scaled = values.slice(0, sensor.nChannels).map((x) => x * OPTICS_SCALE);
+            const scaled = values.slice(0, sensor.nChannels).map((x) => x * MUSE_ATHENA_OPTICS_SCALE_FACTOR);
 
             return [endIndex, sensor.type, [{ type: sensor.type, data: scaled }], sensor.nSamples, sensor.rate];
         }
 
         case 0x88:
         case 0x98: {
-            // Newer Athena firmware sends a long status packet where the first 2 bytes
-            // contain state-of-charge in 1/256 percent units.
-            const endIndex = data.length;
-            if (payloadStart + 2 > endIndex) return [tagIndex + 1, 'BATTERY_PARTIAL', [], 1, 0];
+            const payloadLen = sensor.dataLen;
+            const endIndex = payloadStart + payloadLen;
+            if (endIndex > data.length) return [tagIndex + 1, 'BATTERY_PARTIAL', [], 1, 0];
 
             const block = data.subarray(payloadStart, endIndex);
-            const batteryPercent = (block[0] | (block[1] << 8)) / 256;
+            const batteryPercent = (block[0] | (block[1] << 8)) * MUSE_ATHENA_BATTERY_SCALE_FACTOR;
             return [
                 endIndex,
                 sensor.type,
