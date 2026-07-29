@@ -1,4 +1,4 @@
-import { channelNames, parsePacket } from './athena-parser';
+import { channelNames, parsePacket, parseAthenaNotification } from './athena-parser';
 import { MUSE_ATHENA_EEG_SCALE_FACTOR, MUSE_ATHENA_BATTERY_SCALE_FACTOR } from './athena-constants';
 
 function packUnsignedValues(values: number[], bitWidth: number): Uint8Array {
@@ -17,6 +17,36 @@ function packUnsignedValues(values: number[], bitWidth: number): Uint8Array {
     });
 
     return out;
+}
+
+function buildPhysicalPacket(options: {
+    packetIndex: number;
+    primaryTag: number;
+    primaryBlockIndex: number;
+    primaryPayload: Uint8Array;
+    subpackets?: Array<{ tag: number; index: number; payload: Uint8Array }>;
+}): Uint8Array {
+    const subpackets = options.subpackets ?? [];
+    const subpacketsSize = subpackets.reduce((sum, s) => sum + 5 + s.payload.length, 0);
+    const packetLen = 14 + options.primaryPayload.length + subpacketsSize;
+    const packet = new Uint8Array(packetLen);
+
+    packet[0] = packetLen;
+    packet[1] = options.packetIndex & 0xff;
+    packet[2] = (options.packetIndex >> 8) & 0xff;
+    packet[9] = options.primaryTag;
+    packet[10] = options.primaryBlockIndex;
+    packet.set(options.primaryPayload, 14);
+
+    let offset = 14 + options.primaryPayload.length;
+    for (const sub of subpackets) {
+        packet[offset] = sub.tag;
+        packet[offset + 1] = sub.index;
+        packet.set(sub.payload, offset + 5);
+        offset += 5 + sub.payload.length;
+    }
+
+    return packet;
 }
 
 describe('parsePacket', () => {
@@ -75,5 +105,119 @@ describe('parsePacket', () => {
         expect(freqHz).toBe(0.2);
         expect(nextIdx).toBe(5 + 20); // fixed 20-byte payload, not the full 30-byte buffer
         expect(entries).toEqual([{ type: 'BATTERY', data: [0x62ae * MUSE_ATHENA_BATTERY_SCALE_FACTOR] }]);
+    });
+});
+
+describe('parseAthenaNotification', () => {
+    it('parses a single physical packet with a primary EEG tag', () => {
+        const packet = buildPhysicalPacket({
+            packetIndex: 9,
+            primaryTag: 0x12,
+            primaryBlockIndex: 3,
+            primaryPayload: new Uint8Array(28), // 0x12 fixed payload length
+        });
+
+        const result = parseAthenaNotification(packet);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].packetIndex).toBe(9);
+        expect(result[0].blocks).toHaveLength(1);
+        expect(result[0].blocks[0].type).toBe('EEG');
+        expect(result[0].blocks[0].packageNum).toBe((9 << 8) | 3);
+    });
+
+    it('splits two physical packets concatenated in one notification', () => {
+        const packet1 = buildPhysicalPacket({
+            packetIndex: 1,
+            primaryTag: 0x88,
+            primaryBlockIndex: 0,
+            primaryPayload: new Uint8Array(20),
+        });
+        const packet2 = buildPhysicalPacket({
+            packetIndex: 2,
+            primaryTag: 0x12,
+            primaryBlockIndex: 0,
+            primaryPayload: new Uint8Array(28),
+        });
+        const combined = new Uint8Array(packet1.length + packet2.length);
+        combined.set(packet1, 0);
+        combined.set(packet2, packet1.length);
+
+        const result = parseAthenaNotification(combined);
+
+        expect(result).toHaveLength(2);
+        expect(result[0].blocks[0].type).toBe('BATTERY');
+        expect(result[1].blocks[0].type).toBe('EEG');
+    });
+
+    it('stops parsing when packetLen is invalid', () => {
+        const packet = buildPhysicalPacket({
+            packetIndex: 1,
+            primaryTag: 0x12,
+            primaryBlockIndex: 0,
+            primaryPayload: new Uint8Array(28),
+        });
+        packet[0] = 255; // declares far more data than actually present
+
+        const result = parseAthenaNotification(packet);
+
+        expect(result).toHaveLength(0);
+    });
+
+    it('abandons a physical packet with an unrecognized primary tag but still parses the next physical packet', () => {
+        const unknownPrimaryPacket = buildPhysicalPacket({
+            packetIndex: 1,
+            primaryTag: 0x7f, // not in SENSOR_CONFIG
+            primaryBlockIndex: 0,
+            primaryPayload: new Uint8Array(28),
+        });
+        const eegPacket = buildPhysicalPacket({
+            packetIndex: 2,
+            primaryTag: 0x12,
+            primaryBlockIndex: 0,
+            primaryPayload: new Uint8Array(28),
+        });
+        const combined = new Uint8Array(unknownPrimaryPacket.length + eegPacket.length);
+        combined.set(unknownPrimaryPacket, 0);
+        combined.set(eegPacket, unknownPrimaryPacket.length);
+
+        const result = parseAthenaNotification(combined);
+
+        expect(result).toHaveLength(2);
+        expect(result[0].blocks).toHaveLength(0);
+        expect(result[1].blocks[0].type).toBe('EEG');
+    });
+
+    it('stops the subpacket scan at an unrecognized subpacket tag but keeps earlier subpackets', () => {
+        const packet = buildPhysicalPacket({
+            packetIndex: 1,
+            primaryTag: 0x88,
+            primaryBlockIndex: 0,
+            primaryPayload: new Uint8Array(20),
+            subpackets: [
+                { tag: 0x47, index: 0, payload: new Uint8Array(36) }, // recognized ACC_GYRO
+                { tag: 0x7f, index: 1, payload: new Uint8Array(28) }, // unrecognized -> stop here
+                { tag: 0x12, index: 2, payload: new Uint8Array(28) }, // never reached
+            ],
+        });
+
+        const result = parseAthenaNotification(packet);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].blocks.map((b) => b.type)).toEqual(['BATTERY', 'ACC_GYRO']);
+    });
+
+    it('composes a 16-bit packageNum from packetIndex and blockIndex across the 256 boundary', () => {
+        const packet = buildPhysicalPacket({
+            packetIndex: 511, // 0x1FF -- exercises the byte-1/byte-2 split
+            primaryTag: 0x12,
+            primaryBlockIndex: 7,
+            primaryPayload: new Uint8Array(28),
+        });
+
+        const result = parseAthenaNotification(packet);
+
+        expect(result[0].packetIndex).toBe(511);
+        expect(result[0].blocks[0].packageNum).toBe((511 << 8) | 7);
     });
 });

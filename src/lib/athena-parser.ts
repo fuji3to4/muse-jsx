@@ -20,13 +20,15 @@
 /**
  * Metadata about the Athena tags based on bitmasks
  */
- 
+
 import {
     MUSE_ATHENA_EEG_SCALE_FACTOR,
     MUSE_ATHENA_ACC_SCALE_FACTOR,
     MUSE_ATHENA_GYRO_SCALE_FACTOR,
     MUSE_ATHENA_OPTICS_SCALE_FACTOR,
     MUSE_ATHENA_BATTERY_SCALE_FACTOR,
+    PACKET_HEADER_SIZE,
+    SUBPACKET_HEADER_SIZE,
 } from './athena-constants';
 
 const ATHENA_FREQ_MAP: Record<number, number> = {
@@ -62,7 +64,7 @@ export interface AthenaEntry {
     data: number[];
 }
 
-export interface AthenaParsedPacket {
+export interface AthenaParsedPacketLegacy {
     index: number;
     tag: number;
     type: string;
@@ -336,9 +338,9 @@ export function packetParser(
     data: Uint8Array,
     verbose: boolean = false,
     collect: boolean = true,
-): [Record<string, { packets: number; samples: number }>, AthenaParsedPacket[]] {
+): [Record<string, { packets: number; samples: number }>, AthenaParsedPacketLegacy[]] {
     const counts: Record<string, { packets: number; samples: number }> = {};
-    const parsedPackets: AthenaParsedPacket[] = [];
+    const parsedPackets: AthenaParsedPacketLegacy[] = [];
     let idx = 0;
     let unknownSuppressed = false;
 
@@ -391,4 +393,76 @@ export function packetParser(
     }
 
     return [counts, parsedPackets];
+}
+
+export interface AthenaParsedBlock {
+    packageNum: number;
+    tag: number;
+    type: string;
+    entries: AthenaEntry[];
+    samples: number;
+    freqHz: number;
+}
+
+export interface AthenaParsedPacket {
+    packetIndex: number;
+    blocks: AthenaParsedBlock[];
+}
+
+/**
+ * Splits a raw BLE notification into its physical Athena packets and parses every
+ * primary + subpacket block found. Mirrors BrainFlow's handle_data_notification /
+ * parse_sensor_payload dispatch: a notification may contain multiple concatenated
+ * physical packets, and an unrecognized or malformed tag aborts only the remainder
+ * of the current physical packet rather than the whole notification.
+ */
+export function parseAthenaNotification(data: Uint8Array): AthenaParsedPacket[] {
+    const packets: AthenaParsedPacket[] = [];
+    let offset = 0;
+
+    while (offset < data.length) {
+        if (data.length - offset < PACKET_HEADER_SIZE) break;
+
+        const packetLen = data[offset];
+        if (packetLen < PACKET_HEADER_SIZE || offset + packetLen > data.length) break;
+
+        const packetIndex = data[offset + 1] | (data[offset + 2] << 8);
+        const primaryTag = data[offset + 9];
+        const primaryBlockIndex = data[offset + 10];
+        const packetDataStart = offset + PACKET_HEADER_SIZE;
+        const packetDataSize = packetLen - PACKET_HEADER_SIZE;
+        let packetDataOffset;
+        const blocks: AthenaParsedBlock[] = [];
+
+        const primaryConfig = SENSOR_CONFIG[primaryTag];
+        if (primaryConfig && primaryConfig.dataLen > 0 && primaryConfig.dataLen <= packetDataSize) {
+            const packageNum = (packetIndex << 8) | primaryBlockIndex;
+            const [, type, entries, samples, freqHz] = parsePacket(data, primaryTag, offset + 9, false);
+            blocks.push({ packageNum, tag: primaryTag, type, entries, samples, freqHz });
+            packetDataOffset = primaryConfig.dataLen;
+        } else {
+            packetDataOffset = packetDataSize;
+        }
+
+        while (packetDataOffset + SUBPACKET_HEADER_SIZE <= packetDataSize) {
+            const tagPos = packetDataStart + packetDataOffset;
+            const tag = data[tagPos];
+            const subpacketIndex = data[tagPos + 1];
+            const config = SENSOR_CONFIG[tag];
+            if (!config) break;
+
+            const remaining = packetDataSize - packetDataOffset - SUBPACKET_HEADER_SIZE;
+            if (config.dataLen === 0 || config.dataLen > remaining) break;
+
+            const packageNum = (packetIndex << 8) | subpacketIndex;
+            const [, type, entries, samples, freqHz] = parsePacket(data, tag, tagPos, false);
+            blocks.push({ packageNum, tag, type, entries, samples, freqHz });
+            packetDataOffset += SUBPACKET_HEADER_SIZE + config.dataLen;
+        }
+
+        packets.push({ packetIndex, blocks });
+        offset += packetLen;
+    }
+
+    return packets;
 }
