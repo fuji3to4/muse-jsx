@@ -1,6 +1,6 @@
 # muse-jsx
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20155335.svg)](https://doi.org/10.5281/zenodo.20155335)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21670283.svg)](https://doi.org/10.5281/zenodo.21670283)
 [![npm version](https://img.shields.io/npm/v/muse-jsx.svg)](https://www.npmjs.com/package/muse-jsx)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/fuji3to4/muse-jsx.svg)](https://github.com/fuji3to4/muse-jsx/releases)
@@ -231,8 +231,7 @@ If you use this project in research or publications, please cite:
 
 Citation is appreciated when this software meaningfully contributes to your research outputs.
 
-Satoshi Fujii. (2026). fuji3to4/muse-jsx: v0.2.2 (v0.2.2). Zenodo. https://doi.org/10.5281/zenodo.20155335
-
+Fujii, S. (2026). muse-jsx (Version v0.3.1) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.21670283
 Repository: https://github.com/fuji3to4/muse-jsx
 
 BibTeX:
@@ -240,14 +239,15 @@ BibTeX:
 ```bibtex
 @software{fujii_2026_muse_jsx,
   author       = {Satoshi Fujii},
-  title        = {fuji3to4/muse-jsx: v0.2.2},
+  title        = {fuji3to4/muse-jsx: v0.3.1},
   year         = {2026},
   publisher    = {Zenodo},
-  version      = {v0.2.2},
-  doi          = {10.5281/zenodo.20155335},
-  url          = {https://doi.org/10.5281/zenodo.20155335}
+  version      = {v0.3.1},
+  doi          = {10.5281/zenodo.21670283},
+  url          = {https://doi.org/10.5281/zenodo.21670283}
 }
 ```
+
 
 ## License
 
