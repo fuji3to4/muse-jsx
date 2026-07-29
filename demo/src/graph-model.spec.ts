@@ -17,7 +17,6 @@ describe('graph model', () => {
         for (let index = 0; index < 5; index += 1) {
             const reading: AthenaOpticalReading = {
                 index,
-                opticalChannel: 0,
                 timestamp: 1000 + index,
                 samples: [index, index + 10, index + 20],
             };

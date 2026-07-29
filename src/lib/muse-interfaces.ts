@@ -69,7 +69,6 @@ export interface AthenaAccGyroSample {
 
 export interface AthenaOpticalReading {
     index: number; // Event index
-    opticalChannel: number; // Channel 0-2 (ambient, IR, red)
     timestamp: number; // milliseconds since epoch
     samples: number[]; // 4 optical values at 64 Hz
 }
