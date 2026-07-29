@@ -18,7 +18,7 @@ import type {
 } from './lib/muse-interfaces';
 import { parseControl } from './lib/muse-parse';
 import { decodeResponse, observableCharacteristic } from './lib/muse-utils';
-import { parsePacket } from './lib/athena-parser';
+import { parseAthenaNotification } from './lib/athena-parser';
 
 export { channelNames, opticalChannelNames, selectOpticsChannels } from './lib/athena-parser';
 
@@ -82,13 +82,11 @@ export class MuseAthenaClient {
     private controlChar!: BluetoothRemoteGATTCharacteristic;
     private athenaSensorChar!: BluetoothRemoteGATTCharacteristic;
 
-    // Timestamp tracking state - packet count based (matches BrainFlow's high-res approach)
-    private eegPacketCount = 0;
-    private eegBaseTimestamp = 0;
-    private accGyroPacketCount = 0;
-    private accGyroBaseTimestamp = 0;
-    private opticalPacketCount = 0;
-    private opticalBaseTimestamp = 0;
+    // Timestamp tracking state - last real arrival time per sensor type (matches
+    // BrainFlow's get_sample_timestamp / reset_timestamps).
+    private lastEegTimestamp: number | null = null;
+    private lastAccGyroTimestamp: number | null = null;
+    private lastOpticalTimestamp: number | null = null;
 
     async connect(gatt?: BluetoothRemoteGATTServer) {
         if (typeof isSecureContext !== 'undefined' && !isSecureContext) {
@@ -197,124 +195,127 @@ export class MuseAthenaClient {
         this.connectionStatus.next(true);
     }
 
+    private resetTimestampState(): void {
+        this.lastEegTimestamp = null;
+        this.lastAccGyroTimestamp = null;
+        this.lastOpticalTimestamp = null;
+    }
+
+    private getPacketBaseTimestamp(
+        lastTimestamp: number | null,
+        currentTimestamp: number,
+        nSamples: number,
+        rateHz: number,
+    ): number {
+        if (lastTimestamp === null) {
+            return currentTimestamp - ((nSamples - 1) * 1000) / rateHz;
+        }
+        if (currentTimestamp <= lastTimestamp) {
+            return currentTimestamp;
+        }
+        const predicted = lastTimestamp + 1000 / rateHz;
+        if (predicted <= currentTimestamp) {
+            return predicted;
+        }
+        const step = (currentTimestamp - lastTimestamp) / nSamples;
+        return lastTimestamp + step;
+    }
+
     private parseAthenaPacketForType<T>(packet: Uint8Array, targetType: string): Observable<T> {
         return new Observable<T>((observer) => {
-            if (packet.length < 10) {
-                observer.complete();
-                return;
-            }
-            const eventIndex = packet[1];
-            let idx = 9;
+            const physicalPackets = parseAthenaNotification(packet);
 
-            while (idx < packet.length) {
-                const tag = packet[idx];
-                try {
-                    const [nextIdx, type, entries, samples, freqHz] = parsePacket(packet, tag, idx, false);
-                    if (type === targetType) {
-                        if (type === 'EEG') {
-                            // Initialize base timestamp on first packet
-                            if (this.eegBaseTimestamp === 0) {
-                                this.eegBaseTimestamp = Date.now();
-                            }
-                            // Calculate packet timestamp based on packet count (fixed delta)
-                            const SAMPLES_PER_PACKET = samples; // 2 for EEG
-                            const packetTimestamp =
-                                this.eegBaseTimestamp + (this.eegPacketCount * SAMPLES_PER_PACKET * 1000) / freqHz;
+            for (const physicalPacket of physicalPackets) {
+                const matchingBlocks = physicalPacket.blocks.filter((block) => block.type === targetType);
+                if (matchingBlocks.length === 0) continue;
 
-                            for (const entry of entries) {
-                                const allSamples = entry.data;
-                                const channels = allSamples.length / samples;
-                                for (let ch = 0; ch < channels; ch++) {
-                                    const samplesArr = Array.from({ length: samples }, (_, sampleIndex) => {
-                                        return allSamples[sampleIndex * channels + ch];
-                                    });
-                                    // Each sample gets its own timestamp within the packet
-                                    const sampleTimestamp = packetTimestamp;
-                                    observer.next({
-                                        index: eventIndex,
-                                        electrode: ch,
-                                        timestamp: sampleTimestamp,
-                                        samples: samplesArr,
-                                    } as unknown as T);
-                                }
-                            }
-                            this.eegPacketCount++;
-                        } else if (type === 'ACC_GYRO') {
-                            // Initialize base timestamp on first packet
-                            if (this.accGyroBaseTimestamp === 0) {
-                                this.accGyroBaseTimestamp = Date.now();
-                            }
-                            // Calculate packet timestamp based on packet count (fixed delta)
-                            const packetTimestamp =
-                                this.accGyroBaseTimestamp + (this.accGyroPacketCount * samples * 1000) / freqHz;
+                const hostTimestamp = Date.now();
 
-                            for (let i = 0; i < samples; i++) {
-                                const accEntry = entries[i * 2];
-                                const gyroEntry = entries[i * 2 + 1];
-                                if (accEntry && accEntry.type === 'ACC') {
-                                    observer.next({
-                                        index: eventIndex,
-                                        timestamp: packetTimestamp,
-                                        acc: { x: accEntry.data[0], y: accEntry.data[1], z: accEntry.data[2] },
-                                        gyro: {
-                                            x: gyroEntry?.data[0] || 0,
-                                            y: gyroEntry?.data[1] || 0,
-                                            z: gyroEntry?.data[2] || 0,
-                                        },
-                                    } as unknown as T);
-                                }
-                            }
-                            this.accGyroPacketCount++;
-                        } else if (type === 'OPTICAL') {
-                            // Initialize base timestamp on first packet
-                            if (this.opticalBaseTimestamp === 0) {
-                                this.opticalBaseTimestamp = Date.now();
-                            }
-                            // Calculate packet timestamp based on packet count (fixed delta)
-                            const packetTimestamp =
-                                this.opticalBaseTimestamp + (this.opticalPacketCount * samples * 1000) / freqHz;
+                for (const block of matchingBlocks) {
+                    const { packageNum: eventIndex, entries, samples, freqHz } = block;
 
-                            for (let i = 0; i < samples; i++) {
-                                const optEntry = entries[i];
-                                if (optEntry && optEntry.type === 'OPTICAL') {
-                                    observer.next({
-                                        index: eventIndex,
-                                        opticalChannel: i % 3,
-                                        timestamp: packetTimestamp,
-                                        samples: optEntry.data,
-                                    } as unknown as T);
-                                }
+                    if (targetType === 'EEG') {
+                        const packetTimestamp = this.getPacketBaseTimestamp(
+                            this.lastEegTimestamp,
+                            hostTimestamp,
+                            samples,
+                            freqHz,
+                        );
+                        this.lastEegTimestamp = hostTimestamp;
+
+                        for (const entry of entries) {
+                            const allSamples = entry.data;
+                            const channels = allSamples.length / samples;
+                            for (let ch = 0; ch < channels; ch++) {
+                                const samplesArr = Array.from({ length: samples }, (_, sampleIndex) => {
+                                    return allSamples[sampleIndex * channels + ch];
+                                });
+                                observer.next({
+                                    index: eventIndex,
+                                    electrode: ch,
+                                    timestamp: packetTimestamp,
+                                    samples: samplesArr,
+                                } as unknown as T);
                             }
-                            this.opticalPacketCount++;
+                        }
+                    } else if (targetType === 'ACC_GYRO') {
+                        const packetTimestamp = this.getPacketBaseTimestamp(
+                            this.lastAccGyroTimestamp,
+                            hostTimestamp,
+                            samples,
+                            freqHz,
+                        );
+                        this.lastAccGyroTimestamp = hostTimestamp;
+
+                        for (let i = 0; i < samples; i++) {
+                            const accEntry = entries[i * 2];
+                            const gyroEntry = entries[i * 2 + 1];
+                            if (accEntry && accEntry.type === 'ACC') {
+                                observer.next({
+                                    index: eventIndex,
+                                    timestamp: packetTimestamp,
+                                    acc: { x: accEntry.data[0], y: accEntry.data[1], z: accEntry.data[2] },
+                                    gyro: {
+                                        x: gyroEntry?.data[0] || 0,
+                                        y: gyroEntry?.data[1] || 0,
+                                        z: gyroEntry?.data[2] || 0,
+                                    },
+                                } as unknown as T);
+                            }
+                        }
+                    } else if (targetType === 'OPTICAL') {
+                        const packetTimestamp = this.getPacketBaseTimestamp(
+                            this.lastOpticalTimestamp,
+                            hostTimestamp,
+                            samples,
+                            freqHz,
+                        );
+                        this.lastOpticalTimestamp = hostTimestamp;
+
+                        for (let i = 0; i < samples; i++) {
+                            const optEntry = entries[i];
+                            if (optEntry && optEntry.type === 'OPTICAL') {
+                                observer.next({
+                                    index: eventIndex,
+                                    timestamp: packetTimestamp,
+                                    samples: optEntry.data,
+                                } as unknown as T);
+                            }
                         }
                     }
-
-                    if (nextIdx <= idx) {
-                        idx += 1;
-                    } else {
-                        idx = nextIdx;
-                    }
-                } catch {
-                    idx += 1;
                 }
             }
+
             observer.complete();
         });
     }
 
     private parseAthenaBatterySync(packet: Uint8Array): AthenaBatteryData | null {
-        if (packet.length < 10) return null;
-        let idx = 9;
-        while (idx < packet.length) {
-            const tag = packet[idx];
-            try {
-                const [nextIdx, type, entries] = parsePacket(packet, tag, idx, false);
-                if (type === 'BATTERY') {
-                    return { timestamp: Date.now(), values: entries[0].data };
-                }
-                idx = nextIdx;
-            } catch {
-                idx += 1;
+        const physicalPackets = parseAthenaNotification(packet);
+        for (const physicalPacket of physicalPackets) {
+            const batteryBlock = physicalPacket.blocks.find((block) => block.type === 'BATTERY');
+            if (batteryBlock) {
+                return { timestamp: Date.now(), values: batteryBlock.entries[0].data };
             }
         }
         return null;
@@ -332,6 +333,7 @@ export class MuseAthenaClient {
     }
 
     async start(preset: AthenaPreset = 'p1045') {
+        this.resetTimestampState();
         console.log('[Athena] Starting sequence');
         await this.sendCommand('v4');
         await this.delay(100);
@@ -352,6 +354,7 @@ export class MuseAthenaClient {
     }
 
     async stop() {
+        this.resetTimestampState();
         try {
             await this.sendCommand('h');
         } catch {
@@ -359,9 +362,11 @@ export class MuseAthenaClient {
         }
     }
     async pause() {
+        this.resetTimestampState();
         await this.sendCommand('h');
     }
     async resume() {
+        this.resetTimestampState();
         await this.sendCommand('dc001');
     }
 
@@ -387,12 +392,7 @@ export class MuseAthenaClient {
 
     disconnect() {
         if (this.gatt) {
-            this.eegPacketCount = 0;
-            this.eegBaseTimestamp = 0;
-            this.accGyroPacketCount = 0;
-            this.accGyroBaseTimestamp = 0;
-            this.opticalPacketCount = 0;
-            this.opticalBaseTimestamp = 0;
+            this.resetTimestampState();
             if (this.gatt.connected) this.gatt.disconnect();
             this.connectionStatus.next(false);
         }

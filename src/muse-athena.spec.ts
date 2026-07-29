@@ -2,6 +2,7 @@ import { TextDecoder as UtilTextDecoder, TextEncoder as UtilTextEncoder } from '
 import { DeviceMock, WebBluetoothMock } from 'web-bluetooth-mock';
 
 import { ATHENA_PRESETS, MuseAthenaClient, channelNames, selectOpticsChannels } from './muse-athena';
+import { MUSE_ATHENA_EEG_SCALE_FACTOR, MUSE_ATHENA_OPTICS_SCALE_FACTOR } from './lib/athena-constants';
 
 declare const global: any;
 
@@ -89,6 +90,7 @@ describe('MuseAthenaClient', () => {
         const eegValues = Array.from({ length: 16 }, (_, i) => i + 1);
         const payload = packUnsignedValues(eegValues, 14);
         const packet = new Uint8Array(9 + 1 + 4 + payload.length);
+        packet[0] = packet.length; // packetLen framing byte required by parseAthenaNotification
         packet[1] = 9;
         packet[9] = 0x12; // 8-channel EEG tag
         packet.set(payload, 14);
@@ -105,13 +107,12 @@ describe('MuseAthenaClient', () => {
 
         // Expect one reading per channel (8 channels) with 2 samples each and verify scaling + ordering
         expect(readings).toHaveLength(8);
-        const EEG_SCALE = 1450 / 16383;
         for (let i = 0; i < 8; i++) {
             const r = readings[i];
             expect(r.electrode).toBe(i);
             expect(r.samples.length).toBe(2);
-            const v0 = (i + 1 - 8192) * EEG_SCALE;
-            const v1 = (i + 1 + 8 - 8192) * EEG_SCALE;
+            const v0 = (i + 1) * MUSE_ATHENA_EEG_SCALE_FACTOR;
+            const v1 = (i + 1 + 8) * MUSE_ATHENA_EEG_SCALE_FACTOR;
             expect(r.samples[0]).toBeCloseTo(v0, 5);
             expect(r.samples[1]).toBeCloseTo(v1, 5);
         }
@@ -138,6 +139,7 @@ describe('MuseAthenaClient', () => {
         const payload = packUnsignedValues(opticalValues, 20);
         const packet = new Uint8Array(9 + 1 + 4 + payload.length);
 
+        packet[0] = packet.length; // packetLen framing byte required by parseAthenaNotification
         packet[1] = 9;
         packet[9] = 0x35;
         packet.set(payload, 14);
@@ -156,14 +158,145 @@ describe('MuseAthenaClient', () => {
         expect(readings[0].samples).toHaveLength(8);
         expect(readings[1].samples).toHaveLength(8);
 
-        const OPTICS_SCALE = 1 / 32768;
-        // First reading should contain values 1..8 scaled
+        // First reading should contain values 1..8 (scale factor is 1.0 -- no-op)
         for (let i = 0; i < 8; i++) {
-            expect(readings[0].samples[i]).toBeCloseTo((i + 1) * OPTICS_SCALE, 8);
+            expect(readings[0].samples[i]).toBeCloseTo((i + 1) * MUSE_ATHENA_OPTICS_SCALE_FACTOR, 8);
         }
-        // Second reading should contain values 9..16 scaled
+        // Second reading should contain values 9..16
         for (let i = 0; i < 8; i++) {
-            expect(readings[1].samples[i]).toBeCloseTo((i + 9) * OPTICS_SCALE, 8);
+            expect(readings[1].samples[i]).toBeCloseTo((i + 9) * MUSE_ATHENA_OPTICS_SCALE_FACTOR, 8);
         }
+    });
+
+    describe('getPacketBaseTimestamp', () => {
+        it('backdates from current time on the first packet (last === null)', () => {
+            const client = new MuseAthenaClient() as any;
+            const result = client.getPacketBaseTimestamp(null, 1000, 4, 256);
+            expect(result).toBeCloseTo(1000 - (3 * 1000) / 256, 6);
+        });
+
+        it('returns current time when the clock has not advanced (stale/duplicate)', () => {
+            const client = new MuseAthenaClient() as any;
+            const result = client.getPacketBaseTimestamp(1000, 1000, 4, 256);
+            expect(result).toBe(1000);
+        });
+
+        it('interpolates forward from last timestamp at the nominal rate', () => {
+            const client = new MuseAthenaClient() as any;
+            const result = client.getPacketBaseTimestamp(1000, 1100, 4, 256);
+            expect(result).toBeCloseTo(1000 + 1000 / 256, 6);
+        });
+
+        it('spreads evenly across the actual elapsed interval when arrival is faster than nominal', () => {
+            const client = new MuseAthenaClient() as any;
+            // nominal step is 1000/256 ~= 3.9ms, but only 2ms actually elapsed
+            const result = client.getPacketBaseTimestamp(1000, 1002, 4, 256);
+            expect(result).toBeCloseTo(1000 + (1002 - 1000) / 4, 6);
+        });
+    });
+
+    describe('timestamp reset lifecycle', () => {
+        it('resets all three timestamp fields to null', () => {
+            const client = new MuseAthenaClient() as any;
+            client.lastEegTimestamp = 123;
+            client.lastAccGyroTimestamp = 456;
+            client.lastOpticalTimestamp = 789;
+
+            client.resetTimestampState();
+
+            expect(client.lastEegTimestamp).toBeNull();
+            expect(client.lastAccGyroTimestamp).toBeNull();
+            expect(client.lastOpticalTimestamp).toBeNull();
+        });
+
+        it('resets timestamp state on start, pause, resume, and stop', async () => {
+            const client = new MuseAthenaClient();
+            const delaySpy = jest
+                .spyOn(MuseAthenaClient.prototype as any, 'delay')
+                .mockImplementation(() => Promise.resolve());
+            const resetSpy = jest.spyOn(MuseAthenaClient.prototype as any, 'resetTimestampState');
+            const service = museDevice.getServiceMock(0xfe8d);
+            const controlCharacteristic = service.getCharacteristicMock('273e0001-4c4d-454d-96be-f03bac821358');
+            (controlCharacteristic as any).writeValueWithoutResponse = jest.fn().mockResolvedValue(undefined);
+
+            try {
+                await client.connect();
+                await client.start();
+                expect(resetSpy).toHaveBeenCalledTimes(1);
+
+                await client.pause();
+                expect(resetSpy).toHaveBeenCalledTimes(2);
+
+                await client.resume();
+                expect(resetSpy).toHaveBeenCalledTimes(3);
+
+                await client.stop();
+                expect(resetSpy).toHaveBeenCalledTimes(4);
+            } finally {
+                delaySpy.mockRestore();
+                resetSpy.mockRestore();
+            }
+        });
+
+        it('resets timestamp state on disconnect', async () => {
+            const client = new MuseAthenaClient();
+            const resetSpy = jest.spyOn(MuseAthenaClient.prototype as any, 'resetTimestampState');
+
+            try {
+                await client.connect();
+                resetSpy.mockClear();
+                client.disconnect();
+                expect(resetSpy).toHaveBeenCalledTimes(1);
+            } finally {
+                resetSpy.mockRestore();
+            }
+        });
+    });
+
+    describe('EEG packet timestamps', () => {
+        it('anchors to real arrival time instead of a fixed-rate counter', async () => {
+            const client = new MuseAthenaClient();
+            const service = museDevice.getServiceMock(0xfe8d);
+            const sensorCharacteristic = service.getCharacteristicMock('273e0013-4c4d-454d-96be-f03bac821358');
+
+            await client.connect();
+
+            const timestamps: number[] = [];
+            client.eegReadings.subscribe((r) => {
+                if (r.electrode === 0) timestamps.push(r.timestamp);
+            });
+
+            const eegValues = new Array(16).fill(8192);
+            const payload = packUnsignedValues(eegValues, 14);
+            const buildPacket = () => {
+                const packet = new Uint8Array(14 + payload.length);
+                packet[0] = packet.length;
+                packet[1] = 1;
+                packet[9] = 0x12;
+                packet.set(payload, 14);
+                return packet;
+            };
+
+            const nowSpy = jest.spyOn(Date, 'now');
+            try {
+                nowSpy.mockReturnValueOnce(1_000_000);
+                sensorCharacteristic.value = new DataView(buildPacket().buffer);
+                sensorCharacteristic.dispatchEvent(new CustomEvent('characteristicvaluechanged'));
+
+                // 50ms later -- far more than one nominal 2-sample EEG step (~7.8ms)
+                nowSpy.mockReturnValueOnce(1_000_050);
+                sensorCharacteristic.value = new DataView(buildPacket().buffer);
+                sensorCharacteristic.dispatchEvent(new CustomEvent('characteristicvaluechanged'));
+            } finally {
+                nowSpy.mockRestore();
+            }
+
+            expect(timestamps).toHaveLength(2);
+            // n_samples=2 for tag 0x12 -> backdate by (2-1)/256 seconds on the first packet
+            expect(timestamps[0]).toBeCloseTo(1_000_000 - 1000 / 256, 6);
+            // anchored to the previous packet's real arrival time (1_000_000), not the new
+            // arrival time (1_000_050) and not a fixed 1_000_000-epoch-plus-count clock
+            expect(timestamps[1]).toBeCloseTo(1_000_000 + 1000 / 256, 6);
+        });
     });
 });
