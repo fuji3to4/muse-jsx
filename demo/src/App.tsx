@@ -172,9 +172,7 @@ function useMuse(mode: 'muse' | 'athena', enableAux: boolean, view: 'graph' | 'l
                 // let stream = client.eegReadings.pipe(
                 //     tap((data) => {console.log('raw eeg data:', data);}),
                 //     zipSamples,
-                //     tap((sample: EEGSample) => {
-                //         console.log('filtered eeg sample:', sample);
-                //     })  
+                //     tap((sample: EEGSample) => {console.log('filtered eeg sample:', sample);})  
                 // );
                 let stream = client.eegReadings.pipe(zipSamples);
                 if (settings.notchEnabled) {
